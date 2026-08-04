@@ -190,7 +190,7 @@
       });
     };
 
-    // --- 可拖拽缩放的调整图片组件 ---
+    // --- 可拖拽缩放的图片调整组件 ---
     const AdjustContainerImage = ({ src, alt, transformData, onSaveTransform, isAdmin, className }) => {
       const [pos, setPos] = useState(transformData?.pos || { x: 0, y: 0 });
       const [scale, setScale] = useState(transformData?.scale || 1);
@@ -252,14 +252,14 @@
           />
           {isAdmin && (
             <div className="absolute top-2 left-2 bg-black/60 backdrop-blur-md text-white text-[10px] px-2 py-0.5 rounded-full pointer-events-none opacity-0 hover:opacity-100 transition">
-              按住拖动 / 滚轮缩放调整位置
+              按住拖动 / 滚轮缩放
             </div>
           )}
         </div>
       );
     };
 
-    // --- 可交互 3D 图片/立牌渲染组件 (底座联动 + 固定价格) ---
+    // --- 可交互 3D 图片渲染组件 ---
     const ThreeDImageCard = ({ src, alt, enable3D, isStandee, className, priceText, priceColor, priceSize, priceItalic, children }) => {
       const [rotation, setRotation] = useState({ x: 0, y: 0 });
       const [isDragging, setIsDragging] = useState(false);
@@ -328,7 +328,6 @@
           onTouchMove={handleMouseMove}
           onTouchEnd={handleMouseUp}
         >
-          {/* 3D 旋转立体层 */}
           <div 
             className="preserve-3d w-full h-full flex flex-col items-center justify-center relative transition-transform duration-75"
             style={{ 
@@ -338,7 +337,6 @@
           >
             <img src={src} alt={alt} className={`${className} pointer-events-none`} />
 
-            {/* 若为 3D 立牌则生成联动底座 */}
             {isStandee && (
               <div className="w-36 h-7 -mt-4 bg-white/60 rounded-[50%] border-2 border-pink-300/80 shadow-[0_6px_15px_rgba(244,114,182,0.3)] backdrop-blur-md transform rotateX-60 flex items-center justify-center shrink-0">
                 <div className="w-16 h-2 bg-pink-400/80 rounded-full shadow-inner"></div>
@@ -400,18 +398,20 @@
       const [activeCatId, setActiveCatId] = useState('all');
       const [searchInput, setSearchInput] = useState('');
       const [searchQuery, setSearchQuery] = useState('');
-      const [sortOrder, setSortOrder] = useState('newest'); // 'newest' | 'oldest'
+      const [sortOrder, setSortOrder] = useState('newest'); 
 
       const [goods, setGoods] = useState([]);
       
       const [isModalOpen, setIsModalOpen] = useState(false);
       const [isCatManageOpen, setIsCatManageOpen] = useState(false);
       const [previewItem, setPreviewItem] = useState(null); 
+      const [previewImgIdx, setPreviewImgIdx] = useState(0);
+
       const [editingGoods, setEditingGoods] = useState(null);
       const [showLoginModal, setShowLoginModal] = useState(false);
       const [passwordInput, setPasswordInput] = useState('');
 
-      // 彩蛋区 Modal State
+      // 彩蛋区
       const [isEggOpen, setIsEggOpen] = useState(false);
       const [standeeImages, setStandeeImages] = useState(() => {
         const saved = localStorage.getItem('collector_standees');
@@ -420,7 +420,7 @@
 
       // 表单数据
       const [formData, setFormData] = useState({
-        name: '', categoryId: '', image: '', statusTag: '渡野居', tags: '渡野居', count: 1, note: '', 
+        name: '', categoryId: '', images: [], statusTag: '', tags: '', count: 1, note: '', 
         aspectRatio: 'aspect-square',
         enable3D: false,
         priceText: '',
@@ -433,15 +433,24 @@
       useEffect(() => {
         getAllGoodsFromDB().then(async (data) => {
           if (data && data.length > 0) {
-            setGoods(data);
+            // 数据结构平滑适配：支持旧的 item.image 兼容为 item.images
+            const normalized = data.map(g => ({
+              ...g,
+              images: (g.images && g.images.length > 0) ? g.images : (g.image ? [g.image] : [])
+            }));
+            setGoods(normalized);
           } else {
             try {
               const res = await fetch('./data.json');
               if (res.ok) {
                 const remoteData = await res.json();
                 if (remoteData.goods) {
-                  setGoods(remoteData.goods);
-                  saveGoodsToDB(remoteData.goods);
+                  const normalized = remoteData.goods.map(g => ({
+                    ...g,
+                    images: (g.images && g.images.length > 0) ? g.images : (g.image ? [g.image] : [])
+                  }));
+                  setGoods(normalized);
+                  saveGoodsToDB(normalized);
                 }
                 if (remoteData.categories) setCategories(remoteData.categories);
               }
@@ -529,6 +538,7 @@
 
         const payload = {
           ...formData,
+          image: formData.images[0] || '', // 保留兼容字段为封面图
           categoryId: targetCat,
           tags: formattedTags,
           createdAt: editingGoods?.createdAt || Date.now()
@@ -554,11 +564,13 @@
       const openEditModal = (item, e) => {
         e.stopPropagation();
         setEditingGoods(item);
+        const itemImgs = (item.images && item.images.length > 0) ? item.images : (item.image ? [item.image] : []);
+        
         setFormData({
           name: item.name,
           categoryId: item.categoryId,
-          image: item.image,
-          statusTag: item.statusTag || '渡野居',
+          images: itemImgs,
+          statusTag: item.statusTag || '',
           tags: Array.isArray(item.tags) ? item.tags.join(', ') : (item.tags || ''),
           count: item.count || 1,
           note: item.note || '',
@@ -577,17 +589,33 @@
         setIsModalOpen(false);
         setEditingGoods(null);
         setFormData({ 
-          name: '', categoryId: '', image: '', statusTag: '渡野居', tags: '', count: 1, note: '', 
+          name: '', categoryId: '', images: [], statusTag: '', tags: '', count: 1, note: '', 
           aspectRatio: 'aspect-square', enable3D: false, priceText: '', priceColor: '#f43f5e', priceSize: 'text-sm', priceItalic: false, sizeInfo: '' 
         });
       };
 
-      const handleImageUpload = async (e) => {
-        const file = e.target.files[0];
-        if (file) {
-          const compressed = await compressImage(file);
-          setFormData(prev => ({ ...prev, image: compressed }));
-        }
+      // 多图批量/追加上传处理 + 自动设为“有实物图”
+      const handleMultiImageUpload = async (e) => {
+        const files = Array.from(e.target.files);
+        if (files.length === 0) return;
+
+        const compressedList = await Promise.all(files.map(f => compressImage(f)));
+        const newImages = [...formData.images, ...compressedList];
+
+        setFormData(prev => ({
+          ...prev,
+          images: newImages,
+          // 当图片数量 >= 2 时，自动填充为“有实物图”
+          statusTag: newImages.length >= 2 ? (prev.statusTag || '有实物图') : prev.statusTag
+        }));
+      };
+
+      const removeFormImage = (idx) => {
+        const updatedImgs = formData.images.filter((_, i) => i !== idx);
+        setFormData(prev => ({
+          ...prev,
+          images: updatedImgs
+        }));
       };
 
       const handleStandeeUpload = async (e) => {
@@ -608,7 +636,6 @@
         }
       };
 
-      // 智能检索与按时间倒序/正序筛选
       const filteredGoods = goods
         .filter(item => {
           const matchesCat = activeCatId === 'all' || item.categoryId === activeCatId;
@@ -636,11 +663,9 @@
         <div className="max-w-6xl mx-auto bg-[#fffefb] min-h-screen shadow-xl relative flex flex-col justify-between border-x border-pink-100/50">
           
           <div>
-            {/* --- 首页 Banner 区域 (猫头形状容器) --- */}
+            {/* --- 首页 Banner --- */}
             <div className="pt-6 px-4 flex justify-center">
               <div className="relative w-full max-w-2xl h-56 sm:h-72 rounded-[3.5rem] bg-pink-100 overflow-hidden shadow-lg border-4 border-pink-200/80">
-                
-                {/* 可调整可拖拽放置的首图 */}
                 <AdjustContainerImage 
                   src={heroImage} 
                   alt="小猫人档案馆 Banner" 
@@ -680,7 +705,7 @@
             <div className="sticky top-0 z-30 bg-[#fffefb]/90 backdrop-blur-md border-b border-pink-100/60 p-4 shadow-sm mt-4">
               <div className="flex flex-col sm:flex-row gap-3 items-center justify-between">
                 
-                {/* 搜索框 (支持 Enter 键与 # 搜 tag) */}
+                {/* 搜索框 (已移除 enter确认 字样) */}
                 <div className="relative w-full sm:w-80 flex items-center my-1">
                   <div className="cat-ear-left"></div>
                   <div className="cat-ear-right"></div>
@@ -690,7 +715,7 @@
                     <Icon name="search" className="w-4 h-4 absolute left-3.5 text-pink-400" />
                     <input 
                       type="text" 
-                      placeholder="搜索名称、#标签、尺寸... (Enter确认)"
+                      placeholder="搜索名称、#标签、尺寸..."
                       value={searchInput}
                       onChange={(e) => setSearchInput(e.target.value)}
                       onKeyDown={handleKeyDown}
@@ -709,7 +734,6 @@
                 </div>
 
                 <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
-                  {/* 最近上新/排序倒序筛选 */}
                   <button
                     onClick={() => setSortOrder(prev => prev === 'newest' ? 'oldest' : 'newest')}
                     className="px-3 py-1.5 bg-pink-100/80 hover:bg-pink-200 text-pink-800 text-xs font-bold rounded-2xl transition flex items-center gap-1.5 shadow-sm border border-pink-200"
@@ -794,7 +818,7 @@
               </div>
             </div>
 
-            {/* --- 智能错落网格（排版布局美化） --- */}
+            {/* --- 错落瀑布流展示 --- */}
             <div className="p-4 sm:p-6">
               {filteredGoods.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-20 text-slate-400">
@@ -807,17 +831,19 @@
                     const cat = categories.find(c => c.id === item.categoryId);
                     const itemTags = Array.isArray(item.tags) ? item.tags : [];
                     const ratioClass = item.aspectRatio || 'aspect-square';
+                    const itemImgs = (item.images && item.images.length > 0) ? item.images : (item.image ? [item.image] : []);
+                    const coverImg = itemImgs[0] || '';
 
                     return (
                       <div 
                         key={item.id} 
-                        onClick={() => setPreviewItem(item)}
+                        onClick={() => { setPreviewItem(item); setPreviewImgIdx(0); }}
                         className="break-inside-avoid bg-white rounded-3xl border border-pink-100/80 shadow-sm hover:shadow-md transition overflow-hidden flex flex-col justify-between relative cursor-pointer hover:-translate-y-0.5"
                       >
                         <div className={`relative w-full bg-slate-50 overflow-hidden ${ratioClass === 'aspect-auto' ? 'min-h-[160px]' : ratioClass}`}>
-                          {item.image ? (
+                          {coverImg ? (
                             <ThreeDImageCard 
-                              src={item.image} 
+                              src={coverImg} 
                               alt={item.name} 
                               enable3D={item.enable3D}
                               priceText={item.priceText}
@@ -832,6 +858,14 @@
                             </div>
                           )}
                           
+                          {/* 多张图片张数指示 */}
+                          {itemImgs.length > 1 && (
+                            <span className="absolute bottom-2 left-2 px-2 py-0.5 bg-black/50 backdrop-blur-md text-white text-[9px] font-bold rounded-full z-10 flex items-center gap-1">
+                              <Icon name="layers" className="w-3 h-3" />
+                              {itemImgs.length} 图
+                            </span>
+                          )}
+
                           {item.count > 1 && (
                             <span className="absolute top-2 right-2 px-2 py-0.5 bg-slate-800/80 backdrop-blur-md text-white text-[10px] font-extrabold rounded-full z-10">
                               x{item.count}
@@ -897,9 +931,9 @@
             </div>
           </div>
 
-          {/* --- 页末图片区域 (平滑圆角矩形) --- */}
+          {/* --- 页末图片区域 (高度缩减为现在的一半) --- */}
           <div className="mt-8 px-4">
-            <div className="relative h-48 sm:h-60 w-full overflow-hidden bg-slate-100 rounded-3xl border-2 border-pink-100/80 shadow-md">
+            <div className="relative h-24 sm:h-32 w-full overflow-hidden bg-slate-100 rounded-3xl border-2 border-pink-100/80 shadow-md">
               <AdjustContainerImage 
                 src={footerImage} 
                 alt="页末展示图片" 
@@ -910,9 +944,9 @@
               />
 
               {isAdmin && (
-                <div className="absolute bottom-3 right-3 z-20">
-                  <label className="cursor-pointer bg-white/80 hover:bg-white backdrop-blur-md text-slate-800 text-xs px-3 py-1.5 rounded-xl border border-white/40 transition flex items-center gap-1.5 font-semibold shadow-sm">
-                    <Icon name="camera" className="w-3.5 h-3.5" />
+                <div className="absolute bottom-2 right-2 z-20">
+                  <label className="cursor-pointer bg-white/80 hover:bg-white backdrop-blur-md text-slate-800 text-[10px] px-2.5 py-1 rounded-xl border border-white/40 transition flex items-center gap-1 font-semibold shadow-sm">
+                    <Icon name="camera" className="w-3 h-3" />
                     <span>更换页末图</span>
                     <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
                       const file = e.target.files[0];
@@ -924,7 +958,7 @@
             </div>
           </div>
 
-          {/* --- 彩蛋入口区 (🐈‍⬛🐈🐾) --- */}
+          {/* --- 彩蛋入口区 --- */}
           <div className="my-6 text-center">
             <button 
               onClick={() => setIsEggOpen(true)}
@@ -935,7 +969,7 @@
             </button>
           </div>
 
-          {/* --- 右下角 Floating Menu --- */}
+          {/* --- Floating Menu --- */}
           <div className="fixed bottom-6 right-6 z-40">
             {isMenuOpen && (
               <div className="absolute bottom-14 right-0 w-48 bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-pink-100 p-2 flex flex-col gap-1 mb-2">
@@ -979,10 +1013,9 @@
             </button>
           </div>
 
-          {/* --- 彩蛋页面 3D 亚克力立牌展厅 (粉白背景 + LinMai 花体标题) --- */}
+          {/* --- 3D 展厅 --- */}
           {isEggOpen && (
             <div className="fixed inset-0 z-50 bg-gradient-to-b from-pink-50/95 via-white/95 to-pink-100/90 backdrop-blur-md flex flex-col items-center justify-between p-6">
-              
               <div className="w-full max-w-4xl flex justify-between items-center mb-4">
                 <div className="flex items-center gap-3">
                   <span className="text-4xl font-linmai text-pink-500 drop-shadow-sm">LinMai</span>
@@ -1005,7 +1038,6 @@
                 </div>
               </div>
 
-              {/* 3D 亚克力立牌展示台 */}
               <div className="w-full max-w-4xl flex-grow bg-white/60 rounded-3xl border border-pink-200/80 p-6 overflow-x-auto no-scrollbar flex items-center justify-center gap-10 relative shadow-inner">
                 {standeeImages.length === 0 ? (
                   <div className="text-pink-300 text-sm text-center my-auto">
@@ -1015,17 +1047,13 @@
                 ) : (
                   standeeImages.map((imgSrc, idx) => (
                     <div key={idx} className="flex flex-col items-center group relative shrink-0">
-                      
-                      {/* 3D 立牌主体（包含底座联动） */}
                       <ThreeDImageCard 
                         src={imgSrc} 
                         alt="3D 立牌" 
                         enable3D={true} 
                         isStandee={true}
                         className="max-h-[42vh] object-contain acrylic-standee"
-                      >
-                      </ThreeDImageCard>
-
+                      />
                       {isAdmin && (
                         <button 
                           onClick={() => setStandeeImages(standeeImages.filter((_, i) => i !== idx))}
@@ -1059,63 +1087,101 @@
             </div>
           )}
 
-          {/* --- 详情预览弹窗 --- */}
-          {previewItem && (
-            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 cursor-pointer" onClick={() => setPreviewItem(null)}>
-              <div className="bg-white rounded-3xl max-w-lg w-full overflow-hidden shadow-2xl cursor-default" onClick={(e) => e.stopPropagation()}>
-                <div className="relative max-h-[60vh] bg-slate-100 flex items-center justify-center p-4">
-                  <ThreeDImageCard 
-                    src={previewItem.image} 
-                    alt={previewItem.name} 
-                    enable3D={previewItem.enable3D} 
-                    priceText={previewItem.priceText}
-                    priceColor={previewItem.priceColor}
-                    priceSize={previewItem.priceSize}
-                    priceItalic={previewItem.priceItalic}
-                    className="max-h-[50vh] w-full object-contain"
-                  />
-                  <button onClick={() => setPreviewItem(null)} className="absolute top-3 right-3 p-1.5 bg-black/50 text-white rounded-full hover:bg-black/70 flex items-center justify-center z-20">
-                    <Icon name="x" className="w-5 h-5" />
-                  </button>
-                </div>
-                <div className="p-5">
-                  <div className="flex items-center gap-2 mb-1 flex-wrap">
-                    <span className="text-xs text-pink-500 font-bold">{categories.find(c => c.id === previewItem.categoryId)?.name || '未分类'}</span>
-                    {previewItem.sizeInfo && (
-                      <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md font-medium">
-                        尺寸: {previewItem.sizeInfo}
-                      </span>
-                    )}
-                    {previewItem.statusTag && (
-                      <span className="text-[10px] bg-emerald-400 text-emerald-950 px-2 py-0.5 rounded-md font-bold">
-                        {previewItem.statusTag}
-                      </span>
-                    )}
-                  </div>
-                  <h2 className="text-base font-bold text-slate-800 mb-2">{previewItem.name}</h2>
-                  
-                  {Array.isArray(previewItem.tags) && previewItem.tags.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mb-3">
-                      {previewItem.tags.map((t, idx) => (
-                        <span key={idx} className="text-xs bg-pink-50 text-pink-700 px-2 py-0.5 rounded-md font-medium">
-                          #{t}
-                        </span>
-                      ))}
-                    </div>
-                  )}
+          {/* --- 详情预览弹窗（带多图滑动与左右切换） --- */}
+          {previewItem && (() => {
+            const previewImages = (previewItem.images && previewItem.images.length > 0) ? previewItem.images : (previewItem.image ? [previewItem.image] : []);
+            const currentImg = previewImages[previewImgIdx] || previewImages[0] || '';
 
-                  {previewItem.note && (
-                    <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100 text-xs text-slate-600 leading-relaxed">
-                      {previewItem.note}
+            return (
+              <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 cursor-pointer" onClick={() => setPreviewItem(null)}>
+                <div className="bg-white rounded-3xl max-w-lg w-full overflow-hidden shadow-2xl cursor-default" onClick={(e) => e.stopPropagation()}>
+                  
+                  {/* 图片展示区 */}
+                  <div className="relative max-h-[60vh] bg-slate-100 flex items-center justify-center p-4 group">
+                    <ThreeDImageCard 
+                      src={currentImg} 
+                      alt={previewItem.name} 
+                      enable3D={previewItem.enable3D} 
+                      priceText={previewItem.priceText}
+                      priceColor={previewItem.priceColor}
+                      priceSize={previewItem.priceSize}
+                      priceItalic={previewItem.priceItalic}
+                      className="max-h-[50vh] w-full object-contain"
+                    />
+
+                    {/* 多图滑动左右切换按钮 */}
+                    {previewImages.length > 1 && (
+                      <>
+                        <button 
+                          onClick={() => setPreviewImgIdx(prev => (prev === 0 ? previewImages.length - 1 : prev - 1))}
+                          className="absolute left-3 top-1/2 -translate-y-1/2 p-2 bg-black/40 hover:bg-black/60 text-white rounded-full transition z-20"
+                        >
+                          <Icon name="chevron-left" className="w-5 h-5" />
+                        </button>
+                        <button 
+                          onClick={() => setPreviewImgIdx(prev => (prev === previewImages.length - 1 ? 0 : prev + 1))}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 p-2 bg-black/40 hover:bg-black/60 text-white rounded-full transition z-20"
+                        >
+                          <Icon name="chevron-right" className="w-5 h-5" />
+                        </button>
+
+                        {/* 分页指示小圆点 */}
+                        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 z-20">
+                          {previewImages.map((_, idx) => (
+                            <button
+                              key={idx}
+                              onClick={() => setPreviewImgIdx(idx)}
+                              className={`w-2 h-2 rounded-full transition-all ${idx === previewImgIdx ? 'bg-pink-500 w-4' : 'bg-slate-300'}`}
+                            />
+                          ))}
+                        </div>
+                      </>
+                    )}
+
+                    <button onClick={() => setPreviewItem(null)} className="absolute top-3 right-3 p-1.5 bg-black/50 text-white rounded-full hover:bg-black/70 flex items-center justify-center z-20">
+                      <Icon name="x" className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  <div className="p-5">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                      <span className="text-xs text-pink-500 font-bold">{categories.find(c => c.id === previewItem.categoryId)?.name || '未分类'}</span>
+                      {previewItem.sizeInfo && (
+                        <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md font-medium">
+                          尺寸: {previewItem.sizeInfo}
+                        </span>
+                      )}
+                      {previewItem.statusTag && (
+                        <span className="text-[10px] bg-emerald-400 text-emerald-950 px-2 py-0.5 rounded-md font-bold">
+                          {previewItem.statusTag}
+                        </span>
+                      )}
                     </div>
-                  )}
-                  <div className="mt-4 flex justify-between items-center text-xs text-slate-400">
-                    <span>持有数量：{previewItem.count} 个</span>
+                    <h2 className="text-base font-bold text-slate-800 mb-2">{previewItem.name}</h2>
+                    
+                    {Array.isArray(previewItem.tags) && previewItem.tags.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mb-3">
+                        {previewItem.tags.map((t, idx) => (
+                          <span key={idx} className="text-xs bg-pink-50 text-pink-700 px-2 py-0.5 rounded-md font-medium">
+                            #{t}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    {previewItem.note && (
+                      <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100 text-xs text-slate-600 leading-relaxed">
+                        {previewItem.note}
+                      </div>
+                    )}
+                    <div className="mt-4 flex justify-between items-center text-xs text-slate-400">
+                      <span>持有数量：{previewItem.count} 个</span>
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* --- 管理分类弹窗 --- */}
           {isCatManageOpen && isAdmin && (
@@ -1145,7 +1211,7 @@
             </div>
           )}
 
-          {/* --- 新增/修改周边弹窗 --- */}
+          {/* --- 新增/修改周边弹窗（支持多图管理与自动置为有实物图） --- */}
           {isModalOpen && isAdmin && (
             <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
               <div className="bg-white rounded-3xl w-full max-w-lg p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto border border-pink-100">
@@ -1155,16 +1221,35 @@
                 </div>
 
                 <form onSubmit={handleGoodsSubmit} className="space-y-4">
+                  
+                  {/* 多图上传区 */}
                   <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">实物图 / 官图</label>
-                    <div className="flex items-center gap-4">
-                      <div className="w-20 h-20 bg-slate-100 rounded-2xl overflow-hidden flex items-center justify-center border border-slate-200 shrink-0">
-                        {formData.image ? <img src={formData.image} className="w-full h-full object-cover" /> : <Icon name="image" className="w-6 h-6 text-slate-300" />}
-                      </div>
-                      <label className="cursor-pointer bg-pink-50 hover:bg-pink-100 text-pink-700 text-xs font-semibold px-4 py-2.5 rounded-2xl transition flex items-center gap-2 border border-pink-200">
-                        <Icon name="upload" className="w-4 h-4" />
-                        上传图片 (支持透明PNG)
-                        <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
+                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">
+                      实物图 / 官图 (第一张默认为封面)
+                    </label>
+                    <div className="flex flex-wrap gap-2.5 items-center">
+                      {formData.images.map((imgSrc, idx) => (
+                        <div key={idx} className="relative w-16 h-16 bg-slate-100 rounded-2xl overflow-hidden border border-slate-200 shrink-0 group">
+                          <img src={imgSrc} className="w-full h-full object-cover" />
+                          {idx === 0 && (
+                            <span className="absolute bottom-0 inset-x-0 bg-pink-500 text-white text-[8px] font-bold text-center py-0.5">
+                              封面
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => removeFormImage(idx)}
+                            className="absolute top-1 right-1 bg-black/60 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition"
+                          >
+                            <Icon name="x" className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
+
+                      <label className="cursor-pointer w-16 h-16 bg-pink-50 hover:bg-pink-100 text-pink-500 rounded-2xl border-2 border-dashed border-pink-200 flex flex-col items-center justify-center transition shrink-0">
+                        <Icon name="plus" className="w-5 h-5" />
+                        <span className="text-[9px] font-bold mt-0.5">多选上传</span>
+                        <input type="file" accept="image/*" multiple onChange={handleMultiImageUpload} className="hidden" />
                       </label>
                     </div>
                   </div>
@@ -1243,8 +1328,8 @@
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">左上角角标文字</label>
-                    <input type="text" placeholder="如：渡野居、求购中" value={formData.statusTag} onChange={(e) => setFormData({ ...formData, statusTag: e.target.value })} className="w-full px-3.5 py-2 bg-pink-50/50 border border-pink-200 rounded-2xl text-sm" />
+                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">左上角角标文字 (多图自动填充为“有实物图”)</label>
+                    <input type="text" placeholder="如：有实物图、渡野居、求购中" value={formData.statusTag} onChange={(e) => setFormData({ ...formData, statusTag: e.target.value })} className="w-full px-3.5 py-2 bg-pink-50/50 border border-pink-200 rounded-2xl text-sm" />
                   </div>
 
                   <div>
