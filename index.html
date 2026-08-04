@@ -18,11 +18,6 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap" rel="stylesheet">
 
-  <!-- Firebase App & Firestore -->
-  <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore-compat.js"></script>
-
   <style>
     .no-scrollbar::-webkit-scrollbar { display: none; }
     .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
@@ -111,24 +106,6 @@
   <script type="text/babel">
     const { useState, useEffect, useRef } = React;
 
-    // 初始化 Firebase 全局变量
-    const appId = typeof __app_id !== 'undefined' ? __app_id : 'linmai-collector-app';
-    let db = null;
-    let auth = null;
-
-    if (typeof __firebase_config !== 'undefined') {
-      try {
-        const firebaseConfig = JSON.parse(__firebase_config);
-        if (!firebase.apps.length) {
-          firebase.initializeApp(firebaseConfig);
-        }
-        db = firebase.firestore();
-        auth = firebase.auth();
-      } catch (e) {
-        console.error("Firebase 初始化失败", e);
-      }
-    }
-
     const Icon = ({ name, className }) => {
       const iconRef = useRef(null);
       useEffect(() => {
@@ -145,21 +122,49 @@
     };
 
     const ADMIN_PASSWORD = 'admin123';
+    const DB_NAME = 'LinMaiCollectorDB';
+    const DB_VERSION = 1;
+    const STORE_NAME = 'goods';
 
-    const DEFAULT_CATEGORIES = [
-      { id: 'cat-1', name: '吧唧类目' },
-      { id: 'cat-2', name: '明信片类目' },
-      { id: 'cat-3', name: '72h类目' },
-      { id: 'cat-4', name: '小卡类目' },
-      { id: 'cat-5', name: '满赠类目' },
-      { id: 'cat-6', name: '特签类目' },
-      { id: 'cat-7', name: '线下限定满赠类目' },
-    ];
+    const initDB = () => {
+      return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        request.onerror = () => reject('数据库打开失败');
+        request.onsuccess = () => resolve(request.result);
+        request.onupgradeneeded = (e) => {
+          const db = e.target.result;
+          if (!db.objectStoreNames.contains(STORE_NAME)) {
+            db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+          }
+        };
+      });
+    };
 
-    const DEFAULT_HERO_IMG = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=1200&auto=format&fit=crop';
-    const DEFAULT_FOOTER_IMG = 'https://images.unsplash.com/photo-1579546929518-9e396f3cc809?q=80&w=1200&auto=format&fit=crop';
+    const getAllGoodsFromDB = async () => {
+      try {
+        const db = await initDB();
+        return new Promise((resolve) => {
+          const transaction = db.transaction(STORE_NAME, 'readonly');
+          const store = transaction.objectStore(STORE_NAME);
+          const request = store.getAll();
+          request.onsuccess = () => resolve(request.result || []);
+        });
+      } catch (err) {
+        return [];
+      }
+    };
 
-    const compressImage = (file, maxWidth = 800, quality = 0.75) => {
+    const saveGoodsToDB = async (goodsList) => {
+      try {
+        const db = await initDB();
+        const transaction = db.transaction(STORE_NAME, 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        store.clear();
+        goodsList.forEach(item => store.put(item));
+      } catch (err) {}
+    };
+
+    const compressImage = (file, maxWidth = 1000, quality = 0.85) => {
       return new Promise((resolve) => {
         const reader = new FileReader();
         reader.readAsDataURL(file);
@@ -355,18 +360,40 @@
       );
     };
 
+    const DEFAULT_CATEGORIES = [
+      { id: 'cat-1', name: '吧唧类目' },
+      { id: 'cat-2', name: '明信片类目' },
+      { id: 'cat-3', name: '72h类目' },
+      { id: 'cat-4', name: '小卡类目' },
+      { id: 'cat-5', name: '满赠类目' },
+      { id: 'cat-6', name: '特签类目' },
+      { id: 'cat-7', name: '线下限定满赠类目' },
+    ];
+
+    const DEFAULT_HERO_IMG = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=1200&auto=format&fit=crop';
+    const DEFAULT_FOOTER_IMG = 'https://images.unsplash.com/photo-1579546929518-9e396f3cc809?q=80&w=1200&auto=format&fit=crop';
+
     function App() {
-      const [user, setUser] = useState(null);
       const [isAdmin, setIsAdmin] = useState(false);
       const [isMenuOpen, setIsMenuOpen] = useState(false);
       const [selectedTag, setSelectedTag] = useState('');
 
-      const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
-      const [heroImage, setHeroImage] = useState(DEFAULT_HERO_IMG);
-      const [heroTransform, setHeroTransform] = useState({ pos: { x: 0, y: 0 }, scale: 1 });
-      const [footerImage, setFooterImage] = useState(DEFAULT_FOOTER_IMG);
-      const [footerTransform, setFooterTransform] = useState({ pos: { x: 0, y: 0 }, scale: 1 });
-      const [standeeImages, setStandeeImages] = useState([]);
+      const [categories, setCategories] = useState(() => {
+        const saved = localStorage.getItem('collector_categories');
+        return saved ? JSON.parse(saved) : DEFAULT_CATEGORIES;
+      });
+
+      const [heroImage, setHeroImage] = useState(() => localStorage.getItem('collector_hero_img') || DEFAULT_HERO_IMG);
+      const [heroTransform, setHeroTransform] = useState(() => {
+        const saved = localStorage.getItem('collector_hero_tf');
+        return saved ? JSON.parse(saved) : { pos: { x: 0, y: 0 }, scale: 1 };
+      });
+
+      const [footerImage, setFooterImage] = useState(() => localStorage.getItem('collector_footer_img') || DEFAULT_FOOTER_IMG);
+      const [footerTransform, setFooterTransform] = useState(() => {
+        const saved = localStorage.getItem('collector_footer_tf');
+        return saved ? JSON.parse(saved) : { pos: { x: 0, y: 0 }, scale: 1 };
+      });
 
       const [activeCatId, setActiveCatId] = useState('all');
       const [searchInput, setSearchInput] = useState('');
@@ -384,69 +411,66 @@
       const [showLoginModal, setShowLoginModal] = useState(false);
       const [passwordInput, setPasswordInput] = useState('');
 
+      // 彩蛋区
       const [isEggOpen, setIsEggOpen] = useState(false);
-
-      const [formData, setFormData] = useState({
-        name: '', categoryId: '', images: [], statusTag: '', tags: '', count: 1, note: '', 
-        aspectRatio: 'aspect-square', enable3D: false, priceText: '', priceColor: '#f43f5e', priceSize: 'text-sm', priceItalic: false, sizeInfo: ''
+      const [standeeImages, setStandeeImages] = useState(() => {
+        const saved = localStorage.getItem('collector_standees');
+        return saved ? JSON.parse(saved) : [];
       });
 
-      // 1. 自动登录与权限挂钩
+      // 表单数据
+      const [formData, setFormData] = useState({
+        name: '', categoryId: '', images: [], statusTag: '', tags: '', count: 1, note: '', 
+        aspectRatio: 'aspect-square',
+        enable3D: false,
+        priceText: '',
+        priceColor: '#f43f5e',
+        priceSize: 'text-sm',
+        priceItalic: false,
+        sizeInfo: ''
+      });
+
+      // URL 输入框状态
+      const [imageUrlInput, setImageUrlInput] = useState('');
+
       useEffect(() => {
-        if (!auth) return;
-        const initAuth = async () => {
-          if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-            await auth.signInWithCustomToken(__initial_auth_token);
+        getAllGoodsFromDB().then(async (data) => {
+          if (data && data.length > 0) {
+            const normalized = data.map(g => ({
+              ...g,
+              images: (g.images && g.images.length > 0) ? g.images : (g.image ? [g.image] : [])
+            }));
+            setGoods(normalized);
           } else {
-            await auth.signInAnonymously();
+            try {
+              const res = await fetch('./data.json');
+              if (res.ok) {
+                const remoteData = await res.json();
+                if (remoteData.goods) {
+                  const normalized = remoteData.goods.map(g => ({
+                    ...g,
+                    images: (g.images && g.images.length > 0) ? g.images : (g.image ? [g.image] : [])
+                  }));
+                  setGoods(normalized);
+                  saveGoodsToDB(normalized);
+                }
+                if (remoteData.categories) setCategories(remoteData.categories);
+              }
+            } catch (err) {}
           }
-        };
-        initAuth();
-        const unsubscribe = auth.onAuthStateChanged(setUser);
-        return () => unsubscribe();
+        });
       }, []);
 
-      // 2. 从 Firestore 订阅数据同步（全员可见）
-      useEffect(() => {
-        if (!db) return;
+      useEffect(() => localStorage.setItem('collector_categories', JSON.stringify(categories)), [categories]);
+      useEffect(() => localStorage.setItem('collector_hero_img', heroImage), [heroImage]);
+      useEffect(() => localStorage.setItem('collector_hero_tf', JSON.stringify(heroTransform)), [heroTransform]);
+      useEffect(() => localStorage.setItem('collector_footer_img', footerImage), [footerImage]);
+      useEffect(() => localStorage.setItem('collector_footer_tf', JSON.stringify(footerTransform)), [footerTransform]);
+      useEffect(() => localStorage.setItem('collector_standees', JSON.stringify(standeeImages)), [standeeImages]);
 
-        // 订阅图鉴列表
-        const goodsRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('goods');
-        const unsubGoods = goodsRef.onSnapshot(snapshot => {
-          const list = [];
-          snapshot.forEach(doc => list.push({ id: doc.id, ...doc.data() }));
-          setGoods(list);
-        }, err => console.error("读取图鉴失败", err));
-
-        // 订阅配置信息 (分类、Banner、彩蛋立牌)
-        const configRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('config').doc('site_config');
-        const unsubConfig = configRef.onSnapshot(doc => {
-          if (doc.exists) {
-            const data = doc.data();
-            if (data.categories) setCategories(data.categories);
-            if (data.heroImage) setHeroImage(data.heroImage);
-            if (data.heroTransform) setHeroTransform(data.heroTransform);
-            if (data.footerImage) setFooterImage(data.footerImage);
-            if (data.footerTransform) setFooterTransform(data.footerTransform);
-            if (data.standeeImages) setStandeeImages(data.standeeImages);
-          }
-        }, err => console.error("读取配置失败", err));
-
-        return () => {
-          unsubGoods();
-          unsubConfig();
-        };
-      }, [user]);
-
-      // 保存站点配置到云端
-      const saveConfigToCloud = async (newConfig) => {
-        if (!db) return;
-        try {
-          const ref = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('config').doc('site_config');
-          await ref.set(newConfig, { merge: true });
-        } catch (e) {
-          console.error("保存配置失败", e);
-        }
+      const updateGoodsList = (newList) => {
+        setGoods(newList);
+        saveGoodsToDB(newList);
       };
 
       const handleAdminLogin = (e) => {
@@ -461,7 +485,49 @@
         }
       };
 
-      const handleGoodsSubmit = async (e) => {
+      const exportDataJSON = () => {
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({
+          categories, goods, heroImage, heroTransform, footerImage, footerTransform, standeeImages
+        }, null, 2));
+        const downloadAnchor = document.createElement('a');
+        downloadAnchor.setAttribute("href", dataStr);
+        downloadAnchor.setAttribute("download", "data.json");
+        document.body.appendChild(downloadAnchor);
+        downloadAnchor.click();
+        downloadAnchor.remove();
+      };
+
+      const importDataJSON = (e) => {
+        const fileReader = new FileReader();
+        if (e.target.files[0]) {
+          fileReader.readAsText(e.target.files[0], "UTF-8");
+          fileReader.onload = (event) => {
+            try {
+              const parsed = JSON.parse(event.target.result);
+              if (parsed.goods) updateGoodsList(parsed.goods);
+              if (parsed.categories) setCategories(parsed.categories);
+              if (parsed.heroImage) setHeroImage(parsed.heroImage);
+              if (parsed.footerImage) setFooterImage(parsed.footerImage);
+              if (parsed.standeeImages) setStandeeImages(parsed.standeeImages);
+              alert('数据导入成功！');
+            } catch (err) {
+              alert('数据文件解析格式失败！');
+            }
+          };
+        }
+      };
+
+      const moveCategory = (index, direction) => {
+        const newCats = [...categories];
+        const targetIndex = direction === 'up' ? index - 1 : index + 1;
+        if (targetIndex < 0 || targetIndex >= newCats.length) return;
+        const temp = newCats[index];
+        newCats[index] = newCats[targetIndex];
+        newCats[targetIndex] = temp;
+        setCategories(newCats);
+      };
+
+      const handleGoodsSubmit = (e) => {
         e.preventDefault();
         if (!formData.name) return alert('请输入周边名称');
         let targetCat = formData.categoryId || categories[0]?.id || 'cat-1';
@@ -474,29 +540,26 @@
 
         const payload = {
           ...formData,
-          image: formData.images[0] || '', 
+          image: formData.images[0] || '',
           categoryId: targetCat,
           tags: formattedTags,
           createdAt: editingGoods?.createdAt || Date.now()
         };
 
-        if (db) {
-          const goodsRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('goods');
-          if (editingGoods) {
-            await goodsRef.doc(editingGoods.id).set(payload, { merge: true });
-          } else {
-            await goodsRef.add(payload);
-          }
+        if (editingGoods) {
+          const updated = goods.map(g => g.id === editingGoods.id ? { ...payload, id: editingGoods.id } : g);
+          updateGoodsList(updated);
+        } else {
+          const newGood = { ...payload, id: `good-${Date.now()}` };
+          updateGoodsList([newGood, ...goods]);
         }
         closeModal();
       };
 
-      const handleDeleteGood = async (id, e) => {
+      const handleDeleteGood = (id, e) => {
         e.stopPropagation();
         if (confirm('确定要删除这个周边记录吗？')) {
-          if (db) {
-            await db.collection('artifacts').doc(appId).collection('public').doc('data').collection('goods').doc(id).delete();
-          }
+          updateGoodsList(goods.filter(g => g.id !== id));
         }
       };
 
@@ -506,8 +569,8 @@
         const itemImgs = (item.images && item.images.length > 0) ? item.images : (item.image ? [item.image] : []);
         
         setFormData({
-          name: item.name || '',
-          categoryId: item.categoryId || '',
+          name: item.name,
+          categoryId: item.categoryId,
           images: itemImgs,
           statusTag: item.statusTag || '',
           tags: Array.isArray(item.tags) ? item.tags.join(', ') : (item.tags || ''),
@@ -521,18 +584,21 @@
           priceItalic: !!item.priceItalic,
           sizeInfo: item.sizeInfo || ''
         });
+        setImageUrlInput('');
         setIsModalOpen(true);
       };
 
       const closeModal = () => {
         setIsModalOpen(false);
         setEditingGoods(null);
+        setImageUrlInput('');
         setFormData({ 
           name: '', categoryId: '', images: [], statusTag: '', tags: '', count: 1, note: '', 
           aspectRatio: 'aspect-square', enable3D: false, priceText: '', priceColor: '#f43f5e', priceSize: 'text-sm', priceItalic: false, sizeInfo: '' 
         });
       };
 
+      // 多图批量/追加上传处理 + 自动设为“有实物图”
       const handleMultiImageUpload = async (e) => {
         const files = Array.from(e.target.files);
         if (files.length === 0) return;
@@ -547,6 +613,19 @@
         }));
       };
 
+      // 通过网络链接添加周边图片
+      const handleAddImageUrl = () => {
+        const url = imageUrlInput.trim();
+        if (!url) return;
+        const newImages = [...formData.images, url];
+        setFormData(prev => ({
+          ...prev,
+          images: newImages,
+          statusTag: newImages.length >= 2 ? (prev.statusTag || '有实物图') : prev.statusTag
+        }));
+        setImageUrlInput('');
+      };
+
       const removeFormImage = (idx) => {
         const updatedImgs = formData.images.filter((_, i) => i !== idx);
         setFormData(prev => ({
@@ -558,10 +637,18 @@
       const handleStandeeUpload = async (e) => {
         const file = e.target.files[0];
         if (file) {
-          const compressed = await compressImage(file, 600, 0.85);
-          const newList = [compressed, ...standeeImages];
-          setStandeeImages(newList);
-          saveConfigToCloud({ standeeImages: newList });
+          const compressed = await compressImage(file, 800, 0.9);
+          setStandeeImages(prev => [compressed, ...prev]);
+        }
+      };
+
+      const handleSearchSubmit = () => {
+        setSearchQuery(searchInput.trim());
+      };
+
+      const handleKeyDown = (e) => {
+        if (e.key === 'Enter') {
+          handleSearchSubmit();
         }
       };
 
@@ -573,7 +660,7 @@
           const itemTags = Array.isArray(item.tags) ? item.tags : [];
           const matchesTags = itemTags.some(t => t.toLowerCase().includes(cleanSearch));
           const matchesSearch = !cleanSearch || 
-                                (item.name && item.name.toLowerCase().includes(cleanSearch)) || 
+                                item.name.toLowerCase().includes(cleanSearch) || 
                                 (item.note && item.note.toLowerCase().includes(cleanSearch)) ||
                                 (item.sizeInfo && item.sizeInfo.toLowerCase().includes(cleanSearch)) ||
                                 matchesTags;
@@ -599,7 +686,7 @@
                   src={heroImage} 
                   alt="小猫人档案馆 Banner" 
                   transformData={heroTransform}
-                  onSaveTransform={(tf) => { setHeroTransform(tf); saveConfigToCloud({ heroTransform: tf }); }}
+                  onSaveTransform={setHeroTransform}
                   isAdmin={isAdmin}
                   className="w-full h-full object-cover"
                 />
@@ -617,18 +704,26 @@
                   </div>
 
                   {isAdmin && (
-                    <label className="pointer-events-auto cursor-pointer bg-white/40 hover:bg-white/60 backdrop-blur-md text-slate-800 text-xs px-3 py-1.5 rounded-2xl border border-white/40 transition flex items-center gap-1.5 shadow-sm font-semibold">
-                      <Icon name="camera" className="w-3.5 h-3.5" />
-                      <span className="hidden sm:inline">更换首图</span>
-                      <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
-                        const file = e.target.files[0];
-                        if (file) {
-                          const img = await compressImage(file, 1000, 0.8);
-                          setHeroImage(img);
-                          saveConfigToCloud({ heroImage: img });
-                        }
-                      }} />
-                    </label>
+                    <div className="pointer-events-auto flex gap-1.5">
+                      <label className="cursor-pointer bg-white/40 hover:bg-white/60 backdrop-blur-md text-slate-800 text-xs px-3 py-1.5 rounded-2xl border border-white/40 transition flex items-center gap-1.5 shadow-sm font-semibold">
+                        <Icon name="camera" className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">本地图片</span>
+                        <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
+                          const file = e.target.files[0];
+                          if (file) setHeroImage(await compressImage(file, 1200, 0.8));
+                        }} />
+                      </label>
+                      <button 
+                        onClick={() => {
+                          const url = prompt('请输入首页 Banner 的图片 URL 链接：', heroImage);
+                          if (url && url.trim()) setHeroImage(url.trim());
+                        }}
+                        className="bg-white/40 hover:bg-white/60 backdrop-blur-md text-slate-800 text-xs px-3 py-1.5 rounded-2xl border border-white/40 transition flex items-center gap-1.5 shadow-sm font-semibold"
+                      >
+                        <Icon name="link" className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">网络 URL</span>
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
@@ -638,6 +733,7 @@
             <div className="sticky top-0 z-30 bg-[#fffefb]/90 backdrop-blur-md border-b border-pink-100/60 p-4 shadow-sm mt-4">
               <div className="flex flex-col sm:flex-row gap-3 items-center justify-between">
                 
+                {/* 搜索框 */}
                 <div className="relative w-full sm:w-80 flex items-center my-1">
                   <div className="cat-ear-left"></div>
                   <div className="cat-ear-right"></div>
@@ -650,7 +746,7 @@
                       placeholder="搜索名称、#标签、尺寸..."
                       value={searchInput}
                       onChange={(e) => setSearchInput(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && setSearchQuery(searchInput.trim())}
+                      onKeyDown={handleKeyDown}
                       className="w-full pl-10 pr-12 py-2 bg-pink-50/60 border-2 border-pink-200/80 rounded-2xl text-xs sm:text-sm text-slate-700 placeholder-pink-300 focus:bg-white focus:border-pink-400 focus:outline-none transition shadow-inner"
                     />
                     {searchInput ? (
@@ -658,7 +754,7 @@
                         <Icon name="x" className="w-4 h-4" />
                       </button>
                     ) : (
-                      <button onClick={() => setSearchQuery(searchInput.trim())} className="absolute right-3 text-pink-400 hover:text-pink-600 font-bold text-xs">
+                      <button onClick={handleSearchSubmit} className="absolute right-3 text-pink-400 hover:text-pink-600 font-bold text-xs">
                         搜索
                       </button>
                     )}
@@ -790,6 +886,7 @@
                             </div>
                           )}
                           
+                          {/* 多张图片张数指示 */}
                           {itemImgs.length > 1 && (
                             <span className="absolute bottom-2 left-2 px-2 py-0.5 bg-black/50 backdrop-blur-md text-white text-[9px] font-bold rounded-full z-10 flex items-center gap-1">
                               <Icon name="layers" className="w-3 h-3" />
@@ -869,25 +966,31 @@
                 src={footerImage} 
                 alt="页末展示图片" 
                 transformData={footerTransform}
-                onSaveTransform={(tf) => { setFooterTransform(tf); saveConfigToCloud({ footerTransform: tf }); }}
+                onSaveTransform={setFooterTransform}
                 isAdmin={isAdmin}
                 className="w-full h-full object-cover"
               />
 
               {isAdmin && (
-                <div className="absolute bottom-2 right-2 z-20">
+                <div className="absolute bottom-2 right-2 z-20 flex gap-1.5">
                   <label className="cursor-pointer bg-white/80 hover:bg-white backdrop-blur-md text-slate-800 text-[10px] px-2.5 py-1 rounded-xl border border-white/40 transition flex items-center gap-1 font-semibold shadow-sm">
                     <Icon name="camera" className="w-3 h-3" />
-                    <span>更换页末图</span>
+                    <span>本地更换</span>
                     <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
                       const file = e.target.files[0];
-                      if (file) {
-                        const img = await compressImage(file, 1000, 0.8);
-                        setFooterImage(img);
-                        saveConfigToCloud({ footerImage: img });
-                      }
+                      if (file) setFooterImage(await compressImage(file, 1200, 0.8));
                     }} />
                   </label>
+                  <button 
+                    onClick={() => {
+                      const url = prompt('请输入页末展示图片的 URL 链接：', footerImage);
+                      if (url && url.trim()) setFooterImage(url.trim());
+                    }}
+                    className="bg-white/80 hover:bg-white backdrop-blur-md text-slate-800 text-[10px] px-2.5 py-1 rounded-xl border border-white/40 transition flex items-center gap-1 font-semibold shadow-sm"
+                  >
+                    <Icon name="link" className="w-3 h-3" />
+                    <span>网络 URL</span>
+                  </button>
                 </div>
               )}
             </div>
@@ -914,6 +1017,15 @@
                       <Icon name="settings-2" className="w-4 h-4" />
                       管理分类
                     </button>
+                    <button onClick={() => { exportDataJSON(); setIsMenuOpen(false); }} className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-pink-50 hover:text-pink-600 rounded-xl transition flex items-center gap-2">
+                      <Icon name="download" className="w-4 h-4" />
+                      导出备份数据
+                    </button>
+                    <label className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-pink-50 hover:text-pink-600 rounded-xl transition flex items-center gap-2 cursor-pointer">
+                      <Icon name="upload" className="w-4 h-4" />
+                      导入备份数据
+                      <input type="file" accept=".json" className="hidden" onChange={(e) => { importDataJSON(e); setIsMenuOpen(false); }} />
+                    </label>
                     <div className="h-px bg-slate-100 my-0.5"></div>
                     <button onClick={() => { setIsAdmin(false); setIsMenuOpen(false); }} className="w-full text-left px-3 py-2 text-xs font-semibold text-red-500 hover:bg-red-50 rounded-xl transition flex items-center gap-2">
                       <Icon name="log-out" className="w-4 h-4" />
@@ -952,11 +1064,23 @@
                 
                 <div className="flex items-center gap-3">
                   {isAdmin && (
-                    <label className="cursor-pointer bg-pink-400 hover:bg-pink-500 text-white text-xs px-3.5 py-2 rounded-2xl transition flex items-center gap-1.5 font-bold shadow-md">
-                      <Icon name="plus" className="w-4 h-4" />
-                      上传透明 PNG
-                      <input type="file" accept="image/png" className="hidden" onChange={handleStandeeUpload} />
-                    </label>
+                    <div className="flex items-center gap-2">
+                      <label className="cursor-pointer bg-pink-400 hover:bg-pink-500 text-white text-xs px-3 py-2 rounded-2xl transition flex items-center gap-1.5 font-bold shadow-md">
+                        <Icon name="plus" className="w-4 h-4" />
+                        本地上传 PNG
+                        <input type="file" accept="image/png" className="hidden" onChange={handleStandeeUpload} />
+                      </label>
+                      <button 
+                        onClick={() => {
+                          const url = prompt('请输入透明背景 PNG 立牌的 URL 链接：');
+                          if (url && url.trim()) setStandeeImages(prev => [url.trim(), ...prev]);
+                        }}
+                        className="bg-white hover:bg-pink-50 text-pink-500 border border-pink-200 text-xs px-3 py-2 rounded-2xl transition flex items-center gap-1.5 font-bold shadow-sm"
+                      >
+                        <Icon name="link" className="w-4 h-4" />
+                        网络 URL
+                      </button>
+                    </div>
                   )}
                   <button onClick={() => setIsEggOpen(false)} className="p-2 bg-pink-100 hover:bg-pink-200 text-pink-600 rounded-full transition">
                     <Icon name="x" className="w-5 h-5" />
@@ -982,11 +1106,7 @@
                       />
                       {isAdmin && (
                         <button 
-                          onClick={() => {
-                            const newList = standeeImages.filter((_, i) => i !== idx);
-                            setStandeeImages(newList);
-                            saveConfigToCloud({ standeeImages: newList });
-                          }}
+                          onClick={() => setStandeeImages(standeeImages.filter((_, i) => i !== idx))}
                           className="absolute -top-2 -right-2 p-1.5 bg-red-400 hover:bg-red-500 text-white rounded-full shadow-md z-30 transition"
                         >
                           <Icon name="trash-2" className="w-3.5 h-3.5" />
@@ -1026,6 +1146,7 @@
               <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 cursor-pointer" onClick={() => setPreviewItem(null)}>
                 <div className="bg-white rounded-3xl max-w-lg w-full overflow-hidden shadow-2xl cursor-default" onClick={(e) => e.stopPropagation()}>
                   
+                  {/* 图片展示区 */}
                   <div className="relative max-h-[60vh] bg-slate-100 flex items-center justify-center p-4 group">
                     <ThreeDImageCard 
                       src={currentImg} 
@@ -1038,6 +1159,7 @@
                       className="max-h-[50vh] w-full object-contain"
                     />
 
+                    {/* 多图滑动左右切换按钮 */}
                     {previewImages.length > 1 && (
                       <>
                         <button 
@@ -1053,6 +1175,7 @@
                           <Icon name="chevron-right" className="w-5 h-5" />
                         </button>
 
+                        {/* 分页指示小圆点 */}
                         <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 z-20">
                           {previewImages.map((_, idx) => (
                             <button
@@ -1121,37 +1244,16 @@
                 <div className="space-y-2.5 max-h-[50vh] overflow-y-auto no-scrollbar pr-1 mb-4">
                   {categories.map((cat, index) => (
                     <div key={cat.id} className="flex items-center gap-2 bg-slate-50 p-2.5 rounded-2xl border border-slate-100">
-                      <input 
-                        type="text" 
-                        value={cat.name} 
-                        onChange={(e) => {
-                          const updated = categories.map(c => c.id === cat.id ? { ...c, name: e.target.value } : c);
-                          setCategories(updated);
-                          saveConfigToCloud({ categories: updated });
-                        }} 
-                        className="flex-grow bg-white border border-slate-200 px-3 py-1.5 rounded-xl text-sm text-slate-700 font-medium" 
-                      />
-                      <button 
-                        onClick={() => {
-                          const updated = categories.filter(c => c.id !== cat.id);
-                          setCategories(updated);
-                          saveConfigToCloud({ categories: updated });
-                        }} 
-                        className="p-1.5 text-slate-400 hover:text-red-500 transition flex"
-                      >
-                        <Icon name="trash-2" className="w-4 h-4" />
-                      </button>
+                      <div className="flex flex-col gap-0.5">
+                        <button disabled={index === 0} onClick={() => moveCategory(index, 'up')} className="p-0.5 text-slate-400 hover:text-pink-500 disabled:opacity-20 flex"><Icon name="chevron-up" className="w-3.5 h-3.5" /></button>
+                        <button disabled={index === categories.length - 1} onClick={() => moveCategory(index, 'down')} className="p-0.5 text-slate-400 hover:text-pink-500 disabled:opacity-20 flex"><Icon name="chevron-down" className="w-3.5 h-3.5" /></button>
+                      </div>
+                      <input type="text" value={cat.name} onChange={(e) => setCategories(categories.map(c => c.id === cat.id ? { ...c, name: e.target.value } : c))} className="flex-grow bg-white border border-slate-200 px-3 py-1.5 rounded-xl text-sm text-slate-700 font-medium" />
+                      <button onClick={() => setCategories(categories.filter(c => c.id !== cat.id))} className="p-1.5 text-slate-400 hover:text-red-500 transition flex"><Icon name="trash-2" className="w-4 h-4" /></button>
                     </div>
                   ))}
                 </div>
-                <button 
-                  onClick={() => {
-                    const updated = [...categories, { id: `cat-${Date.now()}`, name: '新类目' }];
-                    setCategories(updated);
-                    saveConfigToCloud({ categories: updated });
-                  }} 
-                  className="w-full py-2.5 border-2 border-dashed border-pink-200 text-pink-500 hover:bg-pink-50 text-sm font-bold rounded-2xl transition flex items-center justify-center gap-1.5"
-                >
+                <button onClick={() => setCategories([...categories, { id: `cat-${Date.now()}`, name: '新类目' }])} className="w-full py-2.5 border-2 border-dashed border-pink-200 text-pink-500 hover:bg-pink-50 text-sm font-bold rounded-2xl transition flex items-center justify-center gap-1.5">
                   <Icon name="plus-circle" className="w-4 h-4" />
                   添加新类目
                 </button>
@@ -1159,7 +1261,7 @@
             </div>
           )}
 
-          {/* --- 新增/修改周边弹窗 --- */}
+          {/* --- 新增/修改周边弹窗（新增 URL 输入） --- */}
           {isModalOpen && isAdmin && (
             <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
               <div className="bg-white rounded-3xl w-full max-w-lg p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto border border-pink-100">
@@ -1170,11 +1272,12 @@
 
                 <form onSubmit={handleGoodsSubmit} className="space-y-4">
                   
+                  {/* 多图上传及 URL 输入区 */}
                   <div>
                     <label className="block text-xs font-semibold text-slate-600 mb-1.5">
                       实物图 / 官图 (第一张默认为封面)
                     </label>
-                    <div className="flex flex-wrap gap-2.5 items-center">
+                    <div className="flex flex-wrap gap-2.5 items-center mb-2.5">
                       {formData.images.map((imgSrc, idx) => (
                         <div key={idx} className="relative w-16 h-16 bg-slate-100 rounded-2xl overflow-hidden border border-slate-200 shrink-0 group">
                           <img src={imgSrc} className="w-full h-full object-cover" />
@@ -1195,9 +1298,27 @@
 
                       <label className="cursor-pointer w-16 h-16 bg-pink-50 hover:bg-pink-100 text-pink-500 rounded-2xl border-2 border-dashed border-pink-200 flex flex-col items-center justify-center transition shrink-0">
                         <Icon name="plus" className="w-5 h-5" />
-                        <span className="text-[9px] font-bold mt-0.5">多选上传</span>
+                        <span className="text-[9px] font-bold mt-0.5">本地上传</span>
                         <input type="file" accept="image/*" multiple onChange={handleMultiImageUpload} className="hidden" />
                       </label>
+                    </div>
+
+                    {/* 新增通过网络 URL 添加图片 */}
+                    <div className="flex gap-2">
+                      <input 
+                        type="url" 
+                        placeholder="或输入图片 URL 链接 (如 https://...)" 
+                        value={imageUrlInput}
+                        onChange={(e) => setImageUrlInput(e.target.value)}
+                        className="flex-grow px-3 py-1.5 bg-pink-50/50 border border-pink-200 rounded-xl text-xs focus:outline-none focus:border-pink-400"
+                      />
+                      <button 
+                        type="button" 
+                        onClick={handleAddImageUrl}
+                        className="px-3 py-1.5 bg-pink-400 hover:bg-pink-500 text-white text-xs font-bold rounded-xl shadow-sm transition shrink-0"
+                      >
+                        添加链接
+                      </button>
                     </div>
                   </div>
 
@@ -1275,12 +1396,12 @@
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">左上角角标文字</label>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">左上角角标文字 (多图自动填充为“有实物图”)</label>
                     <input type="text" placeholder="如：有实物图、渡野居、求购中" value={formData.statusTag} onChange={(e) => setFormData({ ...formData, statusTag: e.target.value })} className="w-full px-3.5 py-2 bg-pink-50/50 border border-pink-200 rounded-2xl text-sm" />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">标签 (用逗号分隔)</label>
+                    <label className="block text-[12px] font-semibold text-slate-600 mb-1.5">标签 (用逗号分隔)</label>
                     <input type="text" placeholder="如：渡野居, 预售, 72h" value={formData.tags} onChange={(e) => setFormData({ ...formData, tags: e.target.value })} className="w-full px-3.5 py-2 bg-pink-50/50 border border-pink-200 rounded-2xl text-sm" />
                   </div>
 
@@ -1307,4 +1428,3 @@
   </script>
 </body>
 </html>
-
