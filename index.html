@@ -73,6 +73,15 @@
       display: inline-block;
       opacity: 0.6;
     }
+
+    /* 3D 旋转容器 Perspective 视距 */
+    .perspective-container {
+      perspective: 800px;
+    }
+    .preserve-3d {
+      transform-style: preserve-3d;
+      transition: transform 0.1s ease-out;
+    }
   </style>
 </head>
 <body class="bg-[#fdfbf7] text-slate-700 min-h-screen pb-12 antialiased selection:bg-pink-100 selection:text-pink-600">
@@ -146,8 +155,8 @@
       }
     };
 
-    // 图片压缩助手
-    const compressImage = (file, maxWidth = 1000, quality = 0.75) => {
+    // 图片压缩助手 (保留 PNG 透明度)
+    const compressImage = (file, maxWidth = 1000, quality = 0.85) => {
       return new Promise((resolve) => {
         const reader = new FileReader();
         reader.readAsDataURL(file);
@@ -166,10 +175,104 @@
             canvas.height = height;
             const ctx = canvas.getContext('2d');
             ctx.drawImage(img, 0, 0, width, height);
-            resolve(canvas.toDataURL('image/jpeg', quality));
+            // PNG 保持透明，其他转为 png/jpeg
+            const mimeType = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+            resolve(canvas.toDataURL(mimeType, quality));
           };
         };
       });
+    };
+
+    // --- 可交互 3D 图片渲染组件 ---
+    const ThreeDImageCard = ({ src, alt, enable3D, className, children }) => {
+      const [rotation, setRotation] = useState({ x: 0, y: 0 });
+      const [isDragging, setIsDragging] = useState(false);
+      const startPos = useRef({ x: 0, y: 0 });
+
+      if (!enable3D) {
+        return (
+          <div className="relative w-full h-full flex items-center justify-center">
+            <img src={src} alt={alt} className={className} />
+            {children}
+          </div>
+        );
+      }
+
+      const handleMouseDown = (e) => {
+        e.stopPropagation();
+        setIsDragging(true);
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        startPos.current = { x: clientX - rotation.y, y: clientY + rotation.x };
+      };
+
+      const handleMouseMove = (e) => {
+        if (!isDragging) return;
+        e.stopPropagation();
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        
+        let rotY = clientX - startPos.current.x;
+        let rotX = startPos.current.y - clientY;
+
+        // 限制旋转幅度
+        rotX = Math.max(-60, Math.min(60, rotX));
+        rotY = Math.max(-60, Math.min(60, rotY));
+
+        setRotation({ x: rotX, y: rotY });
+      };
+
+      const handleMouseUp = (e) => {
+        if (isDragging) {
+          e.stopPropagation();
+          setIsDragging(false);
+        }
+      };
+
+      const resetRotation = (e) => {
+        e.stopPropagation();
+        setRotation({ x: 0, y: 0 });
+      };
+
+      return (
+        <div 
+          className="perspective-container relative w-full h-full flex items-center justify-center cursor-grab active:cursor-grabbing select-none"
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
+          onTouchStart={handleMouseDown}
+          onTouchMove={handleMouseMove}
+          onTouchEnd={handleMouseUp}
+        >
+          <div 
+            className="preserve-3d w-full h-full flex items-center justify-center relative transition-transform duration-75"
+            style={{ 
+              transform: `rotateX(${rotation.x}deg) rotateY(${rotation.y}deg)`,
+              filter: `drop-shadow(${rotation.y * -0.2}px ${rotation.x * 0.2 + 8}px 12px rgba(0,0,0,0.15))`
+            }}
+          >
+            <img src={src} alt={alt} className={`${className} pointer-events-none`} />
+            {children}
+          </div>
+
+          {/* 3D 交互重置角标 */}
+          <div className="absolute top-2 right-2 z-10 flex gap-1 items-center">
+            {(rotation.x !== 0 || rotation.y !== 0) && (
+              <button 
+                onClick={resetRotation}
+                className="bg-black/60 hover:bg-black text-white text-[9px] px-1.5 py-0.5 rounded-full backdrop-blur-md shadow"
+                title="复位"
+              >
+                重置 3D
+              </button>
+            )}
+            <span className="bg-pink-500/80 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full backdrop-blur-md">
+              3D
+            </span>
+          </div>
+        </div>
+      );
     };
 
     const DEFAULT_CATEGORIES = [
@@ -212,8 +315,15 @@
       const [showLoginModal, setShowLoginModal] = useState(false);
       const [passwordInput, setPasswordInput] = useState('');
 
+      // 表单数据 (新增：enable3D, priceText, priceColor, priceSize, sizeInfo)
       const [formData, setFormData] = useState({
-        name: '', categoryId: '', image: '', statusTag: '渡野居', tags: '渡野居', count: 1, note: '', aspectRatio: 'aspect-square'
+        name: '', categoryId: '', image: '', statusTag: '渡野居', tags: '渡野居', count: 1, note: '', 
+        aspectRatio: 'aspect-square',
+        enable3D: false,
+        priceText: '',
+        priceColor: '#f43f5e', // 默认玫瑰红
+        priceSize: 'text-sm',  // text-xs, text-sm, text-base, text-lg
+        sizeInfo: ''           // 尺寸参数 (如 58mm)
       });
 
       useEffect(() => {
@@ -377,7 +487,12 @@
           tags: Array.isArray(item.tags) ? item.tags.join(', ') : (item.tags || ''),
           count: item.count || 1,
           note: item.note || '',
-          aspectRatio: item.aspectRatio || 'aspect-square'
+          aspectRatio: item.aspectRatio || 'aspect-square',
+          enable3D: !!item.enable3D,
+          priceText: item.priceText || '',
+          priceColor: item.priceColor || '#f43f5e',
+          priceSize: item.priceSize || 'text-sm',
+          sizeInfo: item.sizeInfo || ''
         });
         setIsModalOpen(true);
       };
@@ -385,7 +500,10 @@
       const closeModal = () => {
         setIsModalOpen(false);
         setEditingGoods(null);
-        setFormData({ name: '', categoryId: '', image: '', statusTag: '渡野居', tags: '', count: 1, note: '', aspectRatio: 'aspect-square' });
+        setFormData({ 
+          name: '', categoryId: '', image: '', statusTag: '渡野居', tags: '', count: 1, note: '', 
+          aspectRatio: 'aspect-square', enable3D: false, priceText: '', priceColor: '#f43f5e', priceSize: 'text-sm', sizeInfo: '' 
+        });
       };
 
       const handleImageUpload = async (e) => {
@@ -415,7 +533,8 @@
       const filteredGoods = goods.filter(item => {
         const matchesCat = activeCatId === 'all' || item.categoryId === activeCatId;
         const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                              (item.note && item.note.toLowerCase().includes(searchQuery.toLowerCase()));
+                              (item.note && item.note.toLowerCase().includes(searchQuery.toLowerCase())) ||
+                              (item.sizeInfo && item.sizeInfo.toLowerCase().includes(searchQuery.toLowerCase()));
         
         const itemTags = Array.isArray(item.tags) ? item.tags : [];
         const matchesSelectedTag = !selectedTag || itemTags.includes(selectedTag);
@@ -470,7 +589,7 @@
                     <Icon name="search" className="w-4 h-4 absolute left-3.5 text-pink-400" />
                     <input 
                       type="text" 
-                      placeholder="搜索谷子名称、特点备注..."
+                      placeholder="搜索谷子名称、尺寸、备注..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       className="w-full pl-10 pr-8 py-2 bg-pink-50/60 border-2 border-pink-200/80 rounded-2xl text-sm text-slate-700 placeholder-pink-300 focus:bg-white focus:border-pink-400 focus:outline-none transition shadow-inner"
@@ -584,11 +703,22 @@
                       >
                         <div className={`relative w-full bg-slate-50 overflow-hidden ${ratioClass === 'aspect-auto' ? 'min-h-[160px] max-h-[300px]' : ratioClass}`}>
                           {item.image ? (
-                            <img 
+                            <ThreeDImageCard 
                               src={item.image} 
                               alt={item.name} 
-                              className={`w-full h-full group-hover:scale-105 transition duration-300 ${ratioClass === 'aspect-auto' ? 'object-contain' : 'object-cover'}`} 
-                            />
+                              enable3D={item.enable3D}
+                              className={`w-full h-full ${ratioClass === 'aspect-auto' ? 'object-contain' : 'object-cover'}`}
+                            >
+                              {/* 价格文本 (右下角透明底浮层，支持自定义字号与颜色) */}
+                              {item.priceText && (
+                                <div 
+                                  className={`absolute bottom-2 right-2 font-black drop-shadow-sm px-1.5 py-0.5 rounded-md backdrop-blur-[2px] bg-white/20 z-10 ${item.priceSize || 'text-sm'}`}
+                                  style={{ color: item.priceColor || '#f43f5e' }}
+                                >
+                                  {item.priceText}
+                                </div>
+                              )}
+                            </ThreeDImageCard>
                           ) : (
                             <div className="w-full h-full flex items-center justify-center text-slate-300">
                               <Icon name="image" className="w-10 h-10 stroke-1" />
@@ -597,14 +727,14 @@
                           
                           {/* 持有数量 */}
                           {item.count > 1 && (
-                            <span className="absolute top-2 right-2 px-2 py-0.5 bg-slate-800/80 backdrop-blur-md text-white text-[10px] font-extrabold rounded-full">
+                            <span className="absolute top-2 right-2 px-2 py-0.5 bg-slate-800/80 backdrop-blur-md text-white text-[10px] font-extrabold rounded-full z-10">
                               x{item.count}
                             </span>
                           )}
 
                           {/* 自由编辑角标 */}
                           {item.statusTag && (
-                            <span className="absolute top-2 left-2 px-2.5 py-0.5 text-[10px] font-bold rounded-xl backdrop-blur-md bg-emerald-400/90 text-emerald-950 max-w-[80%] truncate shadow-sm">
+                            <span className="absolute top-2 left-2 px-2.5 py-0.5 text-[10px] font-bold rounded-xl backdrop-blur-md bg-emerald-400/90 text-emerald-950 max-w-[80%] truncate shadow-sm z-10">
                               {item.statusTag}
                             </span>
                           )}
@@ -612,9 +742,16 @@
 
                         <div className="p-3 flex flex-col flex-grow justify-between">
                           <div>
-                            <div className="text-[10px] text-pink-400 font-bold mb-0.5 truncate">
-                              {cat ? cat.name : '未分类'}
+                            {/* 类目 & 可选尺寸信息 */}
+                            <div className="flex items-center gap-1.5 text-[10px] text-pink-400 font-bold mb-0.5 truncate">
+                              <span className="truncate">{cat ? cat.name : '未分类'}</span>
+                              {item.sizeInfo && (
+                                <span className="text-slate-400 font-medium border-l border-slate-200 pl-1.5 truncate">
+                                  {item.sizeInfo}
+                                </span>
+                              )}
                             </div>
+
                             <h3 className="text-sm font-bold text-slate-800 line-clamp-2 leading-tight mb-2" title={item.name}>
                               {item.name}
                             </h3>
@@ -720,6 +857,12 @@
                     管理登录
                   </button>
                 )}
+
+                {/* 菜单底部署名 (@月不尽数) */}
+                <div className="h-px bg-slate-100 my-0.5"></div>
+                <div className="py-1.5 text-center text-[11px] font-medium text-pink-400/80 cursor-default select-none">
+                  @月不尽数
+                </div>
               </div>
             )}
 
@@ -755,15 +898,29 @@
           {previewItem && (
             <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 cursor-pointer" onClick={() => setPreviewItem(null)}>
               <div className="bg-white rounded-3xl max-w-lg w-full overflow-hidden shadow-2xl cursor-default" onClick={(e) => e.stopPropagation()}>
-                <div className="relative max-h-[60vh] bg-slate-100 flex items-center justify-center">
-                  <img src={previewItem.image} alt={previewItem.name} className="max-h-[60vh] w-full object-contain" />
-                  <button onClick={() => setPreviewItem(null)} className="absolute top-3 right-3 p-1.5 bg-black/50 text-white rounded-full hover:bg-black/70 flex items-center justify-center">
+                <div className="relative max-h-[60vh] bg-slate-100 flex items-center justify-center p-4">
+                  <ThreeDImageCard src={previewItem.image} alt={previewItem.name} enable3D={previewItem.enable3D} className="max-h-[50vh] w-full object-contain">
+                    {previewItem.priceText && (
+                      <div 
+                        className={`absolute bottom-3 right-3 font-black drop-shadow-md px-2 py-1 rounded-md backdrop-blur-[2px] bg-white/30 z-10 ${previewItem.priceSize || 'text-sm'}`}
+                        style={{ color: previewItem.priceColor || '#f43f5e' }}
+                      >
+                        {previewItem.priceText}
+                      </div>
+                    )}
+                  </ThreeDImageCard>
+                  <button onClick={() => setPreviewItem(null)} className="absolute top-3 right-3 p-1.5 bg-black/50 text-white rounded-full hover:bg-black/70 flex items-center justify-center z-20">
                     <Icon name="x" className="w-5 h-5" />
                   </button>
                 </div>
                 <div className="p-5">
-                  <div className="flex items-center gap-2 mb-1">
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
                     <span className="text-xs text-pink-500 font-bold">{categories.find(c => c.id === previewItem.categoryId)?.name || '未分类'}</span>
+                    {previewItem.sizeInfo && (
+                      <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md font-medium">
+                        尺寸: {previewItem.sizeInfo}
+                      </span>
+                    )}
                     {previewItem.statusTag && (
                       <span className="text-[10px] bg-emerald-400 text-emerald-950 px-2 py-0.5 rounded-md font-bold">
                         {previewItem.statusTag}
@@ -839,32 +996,86 @@
 
                 <form onSubmit={handleGoodsSubmit} className="space-y-4">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">谷子实物图/官图</label>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">谷子实物图/官图 (支持透明 PNG)</label>
                     <div className="flex items-center gap-4">
                       <div className="w-20 h-20 bg-slate-100 rounded-2xl overflow-hidden flex items-center justify-center border border-slate-200 shrink-0">
                         {formData.image ? <img src={formData.image} className="w-full h-full object-cover" /> : <Icon name="image" className="w-6 h-6 text-slate-300" />}
                       </div>
                       <label className="cursor-pointer bg-pink-50 hover:bg-pink-100 text-pink-700 text-xs font-semibold px-4 py-2.5 rounded-2xl transition flex items-center gap-2 border border-pink-200">
                         <Icon name="upload" className="w-4 h-4" />
-                        上传图片 (自动处理压缩)
+                        上传图片 (透明底/立体PNG)
                         <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
                       </label>
                     </div>
                   </div>
 
-                  {/* 1. 图片展示比例自由设置 */}
+                  {/* 3D 旋转效果控制开关 */}
+                  <div className="flex items-center justify-between bg-pink-50/50 p-3 rounded-2xl border border-pink-100">
+                    <div>
+                      <span className="text-xs font-bold text-slate-700 block">开启 3D 旋转视角</span>
+                      <span className="text-[10px] text-slate-400 block">按住图片可自由拖拽旋转 3D 视角</span>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input 
+                        type="checkbox" 
+                        checked={formData.enable3D} 
+                        onChange={(e) => setFormData({ ...formData, enable3D: e.target.checked })} 
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-pink-400"></div>
+                    </label>
+                  </div>
+
+                  {/* 图片显示比例 */}
                   <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">图片展示比例 (由管理员自由选择)</label>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">图片展示比例</label>
                     <select 
                       value={formData.aspectRatio} 
                       onChange={(e) => setFormData({ ...formData, aspectRatio: e.target.value })}
                       className="w-full px-3.5 py-2 bg-pink-50/50 border border-pink-200 rounded-2xl text-sm font-medium"
                     >
-                      <option value="aspect-square">1 : 1 正方形 (推荐：吧唧/色纸)</option>
-                      <option value="aspect-[3/4]">3 : 4 纵向长方形 (推荐：立牌/明信片/小卡)</option>
-                      <option value="aspect-[4/3]">4 : 3 横向长方形 (推荐：横向色纸/海报)</option>
+                      <option value="aspect-square">1 : 1 正方形 (吧唧/色纸)</option>
+                      <option value="aspect-[3/4]">3 : 4 纵向长方形 (立牌/明信片/小卡)</option>
+                      <option value="aspect-[4/3]">4 : 3 横向长方形 (海报/画幅)</option>
                       <option value="aspect-auto">完整适应（不裁切全图显示）</option>
                     </select>
+                  </div>
+
+                  {/* 价格标注 & 自定义色彩/字号 */}
+                  <div className="p-3 bg-slate-50 border border-slate-100 rounded-2xl space-y-3">
+                    <label className="block text-xs font-bold text-slate-700">图片右下角标（价格/标识文本）</label>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <input 
+                        type="text" 
+                        placeholder="如：￥25" 
+                        value={formData.priceText} 
+                        onChange={(e) => setFormData({ ...formData, priceText: e.target.value })} 
+                        className="px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs" 
+                      />
+
+                      {/* 字号自选 */}
+                      <select 
+                        value={formData.priceSize} 
+                        onChange={(e) => setFormData({ ...formData, priceSize: e.target.value })}
+                        className="px-2 py-1.5 bg-white border border-slate-200 rounded-xl text-xs"
+                      >
+                        <option value="text-xs">字号: 小</option>
+                        <option value="text-sm">字号: 中 (默认)</option>
+                        <option value="text-base">字号: 大</option>
+                        <option value="text-lg">字号: 特大</option>
+                      </select>
+
+                      {/* 颜色选择盘 */}
+                      <div className="flex items-center gap-2 bg-white px-2 py-1 border border-slate-200 rounded-xl">
+                        <span className="text-[10px] text-slate-500 whitespace-nowrap">颜色:</span>
+                        <input 
+                          type="color" 
+                          value={formData.priceColor} 
+                          onChange={(e) => setFormData({ ...formData, priceColor: e.target.value })}
+                          className="w-6 h-6 rounded-lg cursor-pointer border-0 bg-transparent"
+                        />
+                      </div>
+                    </div>
                   </div>
 
                   <div>
@@ -872,27 +1083,32 @@
                     <input type="text" required placeholder="如：凛麦特签预售吧唧" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} className="w-full px-3.5 py-2 bg-pink-50/50 border border-pink-200 rounded-2xl text-sm" />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-3 gap-3">
                     <div>
                       <label className="block text-xs font-semibold text-slate-600 mb-1.5">所属分类</label>
-                      <select value={formData.categoryId || categories[0]?.id} onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })} className="w-full px-3.5 py-2 bg-pink-50/50 border border-pink-200 rounded-2xl text-sm">
+                      <select value={formData.categoryId || categories[0]?.id} onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })} className="w-full px-3 py-2 bg-pink-50/50 border border-pink-200 rounded-2xl text-xs">
                         {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                       </select>
                     </div>
 
                     <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1.5">尺寸项 (可选)</label>
+                      <input type="text" placeholder="如: 58mm" value={formData.sizeInfo} onChange={(e) => setFormData({ ...formData, sizeInfo: e.target.value })} className="w-full px-3 py-2 bg-pink-50/50 border border-pink-200 rounded-2xl text-xs" />
+                    </div>
+
+                    <div>
                       <label className="block text-xs font-semibold text-slate-600 mb-1.5">持有数量</label>
-                      <input type="number" min="1" value={formData.count} onChange={(e) => setFormData({ ...formData, count: parseInt(e.target.value) || 1 })} className="w-full px-3.5 py-2 bg-pink-50/50 border border-pink-200 rounded-2xl text-sm" />
+                      <input type="number" min="1" value={formData.count} onChange={(e) => setFormData({ ...formData, count: parseInt(e.target.value) || 1 })} className="w-full px-3 py-2 bg-pink-50/50 border border-pink-200 rounded-2xl text-xs" />
                     </div>
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">左上角绿色角标文字 (店铺/状态)</label>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">左上角角标文字 (店铺/状态)</label>
                     <input type="text" placeholder="如：渡野居、求购中、已到货" value={formData.statusTag} onChange={(e) => setFormData({ ...formData, statusTag: e.target.value })} className="w-full px-3.5 py-2 bg-pink-50/50 border border-pink-200 rounded-2xl text-sm" />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">谷子标签 (用逗号分隔，点击标签可自动过滤筛选)</label>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">谷子标签 (用逗号分隔)</label>
                     <input type="text" placeholder="如：渡野居, 预售, 72h" value={formData.tags} onChange={(e) => setFormData({ ...formData, tags: e.target.value })} className="w-full px-3.5 py-2 bg-pink-50/50 border border-pink-200 rounded-2xl text-sm" />
                   </div>
 
