@@ -24,7 +24,7 @@
       left: 18px;
       width: 16px;
       height: 14px;
-      background-color: #fbcfe8; /* 柔粉 */
+      background-color: #fbcfe8;
       border-top-left-radius: 12px;
       border-top-right-radius: 4px;
       transform: rotate(-15deg);
@@ -56,7 +56,7 @@
       transform: rotate(-10deg);
     }
 
-    /* 猫爪造型按钮 */
+    /* 猫爪按钮 */
     .paw-btn {
       position: relative;
       padding-top: 8px;
@@ -74,13 +74,41 @@
       opacity: 0.6;
     }
 
-    /* 3D 旋转容器 Perspective 视距 */
+    /* 首图圆润猫头 Clip-Path 形状 */
+    .cat-head-shape {
+      clip-path: path('M 0,90 Q 0,40 50,20 Q 90,0 120,40 Q 180,40 220,40 Q 250,0 290,20 Q 340,40 340,90 Q 340,180 170,220 Q 0,180 0,90 Z');
+    }
+
+    /* 两只睡猫页尾 Clip-Path 剪裁 */
+    .sleeping-cats-shape {
+      clip-path: polygon(
+        0% 100%, 0% 35%, 10% 20%, 18% 10%, 25% 25%, 35% 15%, 45% 25%, 
+        50% 20%, 55% 25%, 65% 15%, 75% 25%, 82% 10%, 90% 20%, 100% 35%, 100% 100%
+      );
+    }
+
+    /* 3D 旋转 Perspective */
     .perspective-container {
-      perspective: 800px;
+      perspective: 900px;
     }
     .preserve-3d {
       transform-style: preserve-3d;
-      transition: transform 0.1s ease-out;
+      transition: transform 0.08s ease-out;
+    }
+
+    /* 3D 亚克力立牌光泽特效 */
+    .acrylic-standee {
+      filter: drop-shadow(0px 12px 10px rgba(0,0,0,0.25));
+      position: relative;
+    }
+    .acrylic-standee::after {
+      content: '';
+      position: absolute;
+      inset: -4px;
+      border-radius: 16px;
+      background: linear-gradient(135deg, rgba(255,255,255,0.6) 0%, rgba(255,255,255,0) 40%, rgba(255,255,255,0.3) 100%);
+      pointer-events: none;
+      box-shadow: 0 0 10px rgba(255,255,255,0.8) inset;
     }
   </style>
 </head>
@@ -91,7 +119,6 @@
   <script type="text/babel">
     const { useState, useEffect, useRef } = React;
 
-    // --- 安全的图标组件 ---
     const Icon = ({ name, className }) => {
       const iconRef = useRef(null);
       useEffect(() => {
@@ -108,8 +135,6 @@
     };
 
     const ADMIN_PASSWORD = 'admin123';
-
-    // --- IndexedDB 安全大容量存储 ---
     const DB_NAME = 'LinMaiCollectorDB';
     const DB_VERSION = 1;
     const STORE_NAME = 'goods';
@@ -138,7 +163,6 @@
           request.onsuccess = () => resolve(request.result || []);
         });
       } catch (err) {
-        console.error(err);
         return [];
       }
     };
@@ -150,12 +174,9 @@
         const store = transaction.objectStore(STORE_NAME);
         store.clear();
         goodsList.forEach(item => store.put(item));
-      } catch (err) {
-        console.error(err);
-      }
+      } catch (err) {}
     };
 
-    // 图片压缩助手 (保留 PNG 透明度)
     const compressImage = (file, maxWidth = 1000, quality = 0.85) => {
       return new Promise((resolve) => {
         const reader = new FileReader();
@@ -175,7 +196,6 @@
             canvas.height = height;
             const ctx = canvas.getContext('2d');
             ctx.drawImage(img, 0, 0, width, height);
-            // PNG 保持透明，其他转为 png/jpeg
             const mimeType = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
             resolve(canvas.toDataURL(mimeType, quality));
           };
@@ -183,16 +203,30 @@
       });
     };
 
-    // --- 可交互 3D 图片渲染组件 ---
-    const ThreeDImageCard = ({ src, alt, enable3D, className, children }) => {
+    // --- 可交互 3D 图片渲染组件 (价格固定不动) ---
+    const ThreeDImageCard = ({ src, alt, enable3D, className, priceText, priceColor, priceSize, priceItalic, children }) => {
       const [rotation, setRotation] = useState({ x: 0, y: 0 });
       const [isDragging, setIsDragging] = useState(false);
       const startPos = useRef({ x: 0, y: 0 });
+
+      // 价格标签 (独立置顶不跟随 3D 旋转)
+      const renderPriceBadge = () => {
+        if (!priceText) return null;
+        return (
+          <div 
+            className={`absolute bottom-2 right-2 font-black drop-shadow-md px-2 py-0.5 rounded-md backdrop-blur-[3px] bg-white/40 z-20 pointer-events-none ${priceSize || 'text-sm'} ${priceItalic ? 'italic' : ''}`}
+            style={{ color: priceColor || '#f43f5e' }}
+          >
+            {priceText}
+          </div>
+        );
+      };
 
       if (!enable3D) {
         return (
           <div className="relative w-full h-full flex items-center justify-center">
             <img src={src} alt={alt} className={className} />
+            {renderPriceBadge()}
             {children}
           </div>
         );
@@ -215,9 +249,8 @@
         let rotY = clientX - startPos.current.x;
         let rotX = startPos.current.y - clientY;
 
-        // 限制旋转幅度
-        rotX = Math.max(-60, Math.min(60, rotX));
-        rotY = Math.max(-60, Math.min(60, rotY));
+        rotX = Math.max(-65, Math.min(65, rotX));
+        rotY = Math.max(-65, Math.min(65, rotY));
 
         setRotation({ x: rotX, y: rotY });
       };
@@ -227,11 +260,6 @@
           e.stopPropagation();
           setIsDragging(false);
         }
-      };
-
-      const resetRotation = (e) => {
-        e.stopPropagation();
-        setRotation({ x: 0, y: 0 });
       };
 
       return (
@@ -245,26 +273,29 @@
           onTouchMove={handleMouseMove}
           onTouchEnd={handleMouseUp}
         >
+          {/* 旋转画面层 */}
           <div 
             className="preserve-3d w-full h-full flex items-center justify-center relative transition-transform duration-75"
             style={{ 
               transform: `rotateX(${rotation.x}deg) rotateY(${rotation.y}deg)`,
-              filter: `drop-shadow(${rotation.y * -0.2}px ${rotation.x * 0.2 + 8}px 12px rgba(0,0,0,0.15))`
+              filter: `drop-shadow(${rotation.y * -0.25}px ${rotation.x * 0.25 + 8}px 14px rgba(0,0,0,0.18))`
             }}
           >
             <img src={src} alt={alt} className={`${className} pointer-events-none`} />
             {children}
           </div>
 
-          {/* 3D 交互重置角标 */}
-          <div className="absolute top-2 right-2 z-10 flex gap-1 items-center">
+          {/* 价格标签固定居前 */}
+          {renderPriceBadge()}
+
+          {/* 3D 提示角标 */}
+          <div className="absolute top-2 right-2 z-20 flex gap-1 items-center">
             {(rotation.x !== 0 || rotation.y !== 0) && (
               <button 
-                onClick={resetRotation}
+                onClick={(e) => { e.stopPropagation(); setRotation({ x: 0, y: 0 }); }}
                 className="bg-black/60 hover:bg-black text-white text-[9px] px-1.5 py-0.5 rounded-full backdrop-blur-md shadow"
-                title="复位"
               >
-                重置 3D
+                复位
               </button>
             )}
             <span className="bg-pink-500/80 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full backdrop-blur-md">
@@ -297,12 +328,8 @@
         const saved = localStorage.getItem('collector_categories');
         return saved ? JSON.parse(saved) : DEFAULT_CATEGORIES;
       });
-      const [heroImage, setHeroImage] = useState(() => {
-        return localStorage.getItem('collector_hero_img') || DEFAULT_HERO_IMG;
-      });
-      const [footerImage, setFooterImage] = useState(() => {
-        return localStorage.getItem('collector_footer_img') || DEFAULT_FOOTER_IMG;
-      });
+      const [heroImage, setHeroImage] = useState(() => localStorage.getItem('collector_hero_img') || DEFAULT_HERO_IMG);
+      const [footerImage, setFooterImage] = useState(() => localStorage.getItem('collector_footer_img') || DEFAULT_FOOTER_IMG);
 
       const [activeCatId, setActiveCatId] = useState('all');
       const [searchQuery, setSearchQuery] = useState('');
@@ -315,15 +342,23 @@
       const [showLoginModal, setShowLoginModal] = useState(false);
       const [passwordInput, setPasswordInput] = useState('');
 
-      // 表单数据 (新增：enable3D, priceText, priceColor, priceSize, sizeInfo)
+      // 彩蛋区 Modal State
+      const [isEggOpen, setIsEggOpen] = useState(false);
+      const [standeeImages, setStandeeImages] = useState(() => {
+        const saved = localStorage.getItem('collector_standees');
+        return saved ? JSON.parse(saved) : [];
+      });
+
+      // 表单数据
       const [formData, setFormData] = useState({
         name: '', categoryId: '', image: '', statusTag: '渡野居', tags: '渡野居', count: 1, note: '', 
         aspectRatio: 'aspect-square',
         enable3D: false,
         priceText: '',
-        priceColor: '#f43f5e', // 默认玫瑰红
-        priceSize: 'text-sm',  // text-xs, text-sm, text-base, text-lg
-        sizeInfo: ''           // 尺寸参数 (如 58mm)
+        priceColor: '#f43f5e',
+        priceSize: 'text-sm',
+        priceItalic: false,
+        sizeInfo: ''
       });
 
       useEffect(() => {
@@ -341,24 +376,15 @@
                 }
                 if (remoteData.categories) setCategories(remoteData.categories);
               }
-            } catch (err) {
-              console.log('未检测到远程 data.json');
-            }
+            } catch (err) {}
           }
         });
       }, []);
 
-      useEffect(() => {
-        localStorage.setItem('collector_categories', JSON.stringify(categories));
-      }, [categories]);
-
-      useEffect(() => {
-        localStorage.setItem('collector_hero_img', heroImage);
-      }, [heroImage]);
-
-      useEffect(() => {
-        localStorage.setItem('collector_footer_img', footerImage);
-      }, [footerImage]);
+      useEffect(() => localStorage.setItem('collector_categories', JSON.stringify(categories)), [categories]);
+      useEffect(() => localStorage.setItem('collector_hero_img', heroImage), [heroImage]);
+      useEffect(() => localStorage.setItem('collector_footer_img', footerImage), [footerImage]);
+      useEffect(() => localStorage.setItem('collector_standees', JSON.stringify(standeeImages)), [standeeImages]);
 
       const updateGoodsList = (newList) => {
         setGoods(newList);
@@ -379,10 +405,7 @@
 
       const exportDataJSON = () => {
         const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({
-          categories,
-          goods,
-          heroImage,
-          footerImage
+          categories, goods, heroImage, footerImage, standeeImages
         }, null, 2));
         const downloadAnchor = document.createElement('a');
         downloadAnchor.setAttribute("href", dataStr);
@@ -403,6 +426,7 @@
               if (parsed.categories) setCategories(parsed.categories);
               if (parsed.heroImage) setHeroImage(parsed.heroImage);
               if (parsed.footerImage) setFooterImage(parsed.footerImage);
+              if (parsed.standeeImages) setStandeeImages(parsed.standeeImages);
               alert('数据导入成功！');
             } catch (err) {
               alert('数据文件解析格式失败！');
@@ -419,22 +443,6 @@
         newCats[index] = newCats[targetIndex];
         newCats[targetIndex] = temp;
         setCategories(newCats);
-      };
-
-      const renameCategory = (id, newName) => {
-        setCategories(categories.map(c => c.id === id ? { ...c, name: newName } : c));
-      };
-
-      const addCategory = () => {
-        setCategories([...categories, { id: `cat-${Date.now()}`, name: '新类目' }]);
-      };
-
-      const deleteCategory = (id) => {
-        if (categories.length <= 1) return alert('至少保留一个分类');
-        if (confirm('确认删除该分类吗？')) {
-          setCategories(categories.filter(c => c.id !== id));
-          if (activeCatId === id) setActiveCatId('all');
-        }
       };
 
       const handleGoodsSubmit = (e) => {
@@ -459,11 +467,7 @@
           const updated = goods.map(g => g.id === editingGoods.id ? { ...payload, id: editingGoods.id } : g);
           updateGoodsList(updated);
         } else {
-          const newGood = {
-            ...payload,
-            id: `good-${Date.now()}`,
-            createdAt: Date.now()
-          };
+          const newGood = { ...payload, id: `good-${Date.now()}`, createdAt: Date.now() };
           updateGoodsList([newGood, ...goods]);
         }
         closeModal();
@@ -492,6 +496,7 @@
           priceText: item.priceText || '',
           priceColor: item.priceColor || '#f43f5e',
           priceSize: item.priceSize || 'text-sm',
+          priceItalic: !!item.priceItalic,
           sizeInfo: item.sizeInfo || ''
         });
         setIsModalOpen(true);
@@ -502,7 +507,7 @@
         setEditingGoods(null);
         setFormData({ 
           name: '', categoryId: '', image: '', statusTag: '渡野居', tags: '', count: 1, note: '', 
-          aspectRatio: 'aspect-square', enable3D: false, priceText: '', priceColor: '#f43f5e', priceSize: 'text-sm', sizeInfo: '' 
+          aspectRatio: 'aspect-square', enable3D: false, priceText: '', priceColor: '#f43f5e', priceSize: 'text-sm', priceItalic: false, sizeInfo: '' 
         });
       };
 
@@ -514,19 +519,11 @@
         }
       };
 
-      const handleBannerUpload = async (e) => {
+      const handleStandeeUpload = async (e) => {
         const file = e.target.files[0];
         if (file) {
-          const compressed = await compressImage(file, 1200, 0.8);
-          setHeroImage(compressed);
-        }
-      };
-
-      const handleFooterImageUpload = async (e) => {
-        const file = e.target.files[0];
-        if (file) {
-          const compressed = await compressImage(file, 1200, 0.8);
-          setFooterImage(compressed);
+          const compressed = await compressImage(file, 800, 0.9);
+          setStandeeImages(prev => [compressed, ...prev]);
         }
       };
 
@@ -546,37 +543,47 @@
         <div className="max-w-6xl mx-auto bg-[#fffefb] min-h-screen shadow-xl relative flex flex-col justify-between border-x border-pink-100/50">
           
           <div>
-            {/* --- 首页 Banner 区域 --- */}
-            <div className="relative h-[32vh] sm:h-[42vh] w-full overflow-hidden bg-slate-900 group rounded-b-[2rem]">
-              <img 
-                src={heroImage} 
-                alt="凛麦图鉴 Banner" 
-                className="w-full h-full object-cover opacity-85 group-hover:scale-105 transition-transform duration-700 ease-out"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-slate-950/70 via-slate-950/10 to-transparent"></div>
+            {/* --- 首页 Banner 区域 (圆润猫头形状) --- */}
+            <div className="pt-6 px-4 flex justify-center">
+              <div className="relative w-full max-w-2xl h-56 sm:h-72 rounded-[3.5rem] bg-pink-100 overflow-hidden shadow-lg group border-4 border-pink-200/80">
+                
+                {/* 猫耳拱形顶部修饰 */}
+                <div className="absolute -top-6 left-12 w-20 h-20 bg-pink-300 rounded-full border-4 border-pink-200"></div>
+                <div className="absolute -top-6 right-12 w-20 h-20 bg-pink-300 rounded-full border-4 border-pink-200"></div>
 
-              <div className="absolute bottom-6 left-6 right-6 flex justify-between items-end">
-                <div>
-                  <span className="inline-block px-3.5 py-1 bg-pink-300/90 backdrop-blur-md text-pink-900 text-xs font-bold rounded-full mb-2 tracking-wide shadow-sm">
-                    IP: 于是麦麦决定离家出走
-                  </span>
-                  <h1 className="text-3xl sm:text-5xl font-black text-white tracking-tight drop-shadow-md">
-                    凛麦图鉴
-                  </h1>
+                <img 
+                  src={heroImage} 
+                  alt="凛麦图鉴 Banner" 
+                  className="w-full h-full object-cover relative z-10 group-hover:scale-105 transition-transform duration-700 ease-out"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-slate-950/70 via-slate-950/10 to-transparent z-20"></div>
+
+                <div className="absolute bottom-6 left-6 right-6 flex justify-between items-end z-30">
+                  <div>
+                    <span className="inline-block px-3.5 py-1 bg-pink-300/90 backdrop-blur-md text-pink-900 text-xs font-bold rounded-full mb-1.5 tracking-wide shadow-sm">
+                      IP: 于是麦麦决定离家出走
+                    </span>
+                    <h1 className="text-3xl sm:text-4xl font-black text-white tracking-tight drop-shadow-md">
+                      凛麦图鉴
+                    </h1>
+                  </div>
+
+                  {isAdmin && (
+                    <label className="cursor-pointer bg-white/30 hover:bg-white/40 backdrop-blur-md text-slate-800 text-xs px-3 py-1.5 rounded-2xl border border-white/40 transition flex items-center gap-1.5 shadow-sm font-semibold">
+                      <Icon name="camera" className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">换猫头图</span>
+                      <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
+                        const file = e.target.files[0];
+                        if (file) setHeroImage(await compressImage(file, 1200, 0.8));
+                      }} />
+                    </label>
+                  )}
                 </div>
-
-                {isAdmin && (
-                  <label className="cursor-pointer bg-white/30 hover:bg-white/40 backdrop-blur-md text-slate-800 text-xs px-3 py-2 rounded-2xl border border-white/40 transition flex items-center gap-1.5 shadow-sm font-semibold">
-                    <Icon name="camera" className="w-4 h-4" />
-                    <span className="hidden sm:inline">换顶部图</span>
-                    <input type="file" accept="image/*" className="hidden" onChange={handleBannerUpload} />
-                  </label>
-                )}
               </div>
             </div>
 
             {/* --- 搜索与筛选控制栏 --- */}
-            <div className="sticky top-0 z-30 bg-[#fffefb]/90 backdrop-blur-md border-b border-pink-100/60 p-4 shadow-sm">
+            <div className="sticky top-0 z-30 bg-[#fffefb]/90 backdrop-blur-md border-b border-pink-100/60 p-4 shadow-sm mt-4">
               <div className="flex flex-col sm:flex-row gap-4 items-center justify-between">
                 
                 {/* 猫咪造型搜索框 */}
@@ -602,7 +609,6 @@
                   </div>
                 </div>
 
-                {/* 激活的标签提示 */}
                 {selectedTag && (
                   <div className="flex items-center gap-2 bg-pink-100/80 px-3 py-1 rounded-full border border-pink-300">
                     <span className="text-xs text-pink-700 font-semibold">包含标签: #{selectedTag}</span>
@@ -612,7 +618,6 @@
                   </div>
                 )}
 
-                {/* 管理员功能操作项 */}
                 {isAdmin && (
                   <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
                     <button 
@@ -635,14 +640,12 @@
 
               </div>
 
-              {/* --- 猫爪造型类目 Tab 栏 --- */}
+              {/* --- 类目 Tab 栏 --- */}
               <div className="flex items-center gap-2.5 mt-4 overflow-x-auto no-scrollbar pb-1">
                 <button
                   onClick={() => setActiveCatId('all')}
                   className={`paw-btn px-4 py-2 text-xs font-bold whitespace-nowrap transition flex items-center gap-1.5 shadow-sm active:scale-95 ${
-                    activeCatId === 'all'
-                      ? 'bg-slate-800 text-white'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    activeCatId === 'all' ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   }`}
                 >
                   <div className="flex gap-0.5">
@@ -681,7 +684,7 @@
               </div>
             </div>
 
-            {/* --- 周边展示卡片网格 --- */}
+            {/* --- 周边展示网格 --- */}
             <div className="p-4 sm:p-6">
               {filteredGoods.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-20 text-slate-400">
@@ -707,32 +710,24 @@
                               src={item.image} 
                               alt={item.name} 
                               enable3D={item.enable3D}
+                              priceText={item.priceText}
+                              priceColor={item.priceColor}
+                              priceSize={item.priceSize}
+                              priceItalic={item.priceItalic}
                               className={`w-full h-full ${ratioClass === 'aspect-auto' ? 'object-contain' : 'object-cover'}`}
-                            >
-                              {/* 价格文本 (右下角透明底浮层，支持自定义字号与颜色) */}
-                              {item.priceText && (
-                                <div 
-                                  className={`absolute bottom-2 right-2 font-black drop-shadow-sm px-1.5 py-0.5 rounded-md backdrop-blur-[2px] bg-white/20 z-10 ${item.priceSize || 'text-sm'}`}
-                                  style={{ color: item.priceColor || '#f43f5e' }}
-                                >
-                                  {item.priceText}
-                                </div>
-                              )}
-                            </ThreeDImageCard>
+                            />
                           ) : (
                             <div className="w-full h-full flex items-center justify-center text-slate-300">
                               <Icon name="image" className="w-10 h-10 stroke-1" />
                             </div>
                           )}
                           
-                          {/* 持有数量 */}
                           {item.count > 1 && (
                             <span className="absolute top-2 right-2 px-2 py-0.5 bg-slate-800/80 backdrop-blur-md text-white text-[10px] font-extrabold rounded-full z-10">
                               x{item.count}
                             </span>
                           )}
 
-                          {/* 自由编辑角标 */}
                           {item.statusTag && (
                             <span className="absolute top-2 left-2 px-2.5 py-0.5 text-[10px] font-bold rounded-xl backdrop-blur-md bg-emerald-400/90 text-emerald-950 max-w-[80%] truncate shadow-sm z-10">
                               {item.statusTag}
@@ -742,7 +737,6 @@
 
                         <div className="p-3 flex flex-col flex-grow justify-between">
                           <div>
-                            {/* 类目 & 可选尺寸信息 */}
                             <div className="flex items-center gap-1.5 text-[10px] text-pink-400 font-bold mb-0.5 truncate">
                               <span className="truncate">{cat ? cat.name : '未分类'}</span>
                               {item.sizeInfo && (
@@ -756,7 +750,6 @@
                               {item.name}
                             </h3>
 
-                            {/* 交互 Tag */}
                             {itemTags.length > 0 && (
                               <div className="flex flex-wrap gap-1 mb-2">
                                 {itemTags.map((tag, idx) => (
@@ -794,45 +787,55 @@
             </div>
           </div>
 
-          {/* --- 页末图片区域 (全图半高：尺寸高度设为20vh) --- */}
-          <div className="mt-8 relative h-[18vh] sm:h-[22vh] w-full overflow-hidden bg-slate-900 group rounded-t-[2rem]">
-            <img 
-              src={footerImage} 
-              alt="页末展示图片" 
-              className="w-full h-full object-cover opacity-80"
-            />
-            <div className="absolute inset-0 bg-slate-950/20"></div>
+          {/* --- 页末图片区域 (两只睡觉猫咪连体轮廓) --- */}
+          <div className="mt-8 px-4">
+            <div className="relative h-[20vh] sm:h-[24vh] w-full overflow-hidden bg-slate-900 group sleeping-cats-shape shadow-lg">
+              <img 
+                src={footerImage} 
+                alt="页末展示图片" 
+                className="w-full h-full object-cover opacity-80"
+              />
+              <div className="absolute inset-0 bg-slate-950/20"></div>
 
-            {isAdmin && (
-              <div className="absolute bottom-3 right-3">
-                <label className="cursor-pointer bg-white/80 hover:bg-white backdrop-blur-md text-slate-800 text-xs px-3 py-1.5 rounded-xl border border-white/40 transition flex items-center gap-1.5 font-semibold">
-                  <Icon name="camera" className="w-3.5 h-3.5" />
-                  <span>更换页末图</span>
-                  <input type="file" accept="image/*" className="hidden" onChange={handleFooterImageUpload} />
-                </label>
-              </div>
-            )}
+              {isAdmin && (
+                <div className="absolute bottom-3 right-3">
+                  <label className="cursor-pointer bg-white/80 hover:bg-white backdrop-blur-md text-slate-800 text-xs px-3 py-1.5 rounded-xl border border-white/40 transition flex items-center gap-1.5 font-semibold">
+                    <Icon name="camera" className="w-3.5 h-3.5" />
+                    <span>更换页末图</span>
+                    <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
+                      const file = e.target.files[0];
+                      if (file) setFooterImage(await compressImage(file, 1200, 0.8));
+                    }} />
+                  </label>
+                </div>
+              )}
+            </div>
           </div>
 
-          {/* --- 右下角三杠（Hamburger Menu）浮动按钮 --- */}
+          {/* --- 彩蛋区 (🐈‍⬛🐈🐾) --- */}
+          <div className="my-6 text-center">
+            <button 
+              onClick={() => setIsEggOpen(true)}
+              className="inline-flex items-center gap-1.5 text-base hover:scale-125 transition-transform duration-300 opacity-70 hover:opacity-100 select-none cursor-pointer"
+              title="解锁隐藏彩蛋"
+            >
+              🐈‍⬛🐈🐾
+            </button>
+          </div>
+
+          {/* --- 右下角三杠（Hamburger Menu） --- */}
           <div className="fixed bottom-6 right-6 z-40">
             {isMenuOpen && (
               <div className="absolute bottom-14 right-0 w-48 bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-pink-100 p-2 flex flex-col gap-1 mb-2">
                 {isAdmin ? (
                   <>
-                    <button 
-                      onClick={() => { setIsCatManageOpen(true); setIsMenuOpen(false); }}
-                      className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-pink-50 hover:text-pink-600 rounded-xl transition flex items-center gap-2"
-                    >
+                    <button onClick={() => { setIsCatManageOpen(true); setIsMenuOpen(false); }} className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-pink-50 hover:text-pink-600 rounded-xl transition flex items-center gap-2">
                       <Icon name="settings-2" className="w-4 h-4" />
                       管理分类
                     </button>
-                    <button 
-                      onClick={() => { exportDataJSON(); setIsMenuOpen(false); }}
-                      className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-pink-50 hover:text-pink-600 rounded-xl transition flex items-center gap-2"
-                    >
+                    <button onClick={() => { exportDataJSON(); setIsMenuOpen(false); }} className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-pink-50 hover:text-pink-600 rounded-xl transition flex items-center gap-2">
                       <Icon name="download" className="w-4 h-4" />
-                      导出备份数据(GitHub同步)
+                      导出备份数据
                     </button>
                     <label className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-pink-50 hover:text-pink-600 rounded-xl transition flex items-center gap-2 cursor-pointer">
                       <Icon name="upload" className="w-4 h-4" />
@@ -840,25 +843,18 @@
                       <input type="file" accept=".json" className="hidden" onChange={(e) => { importDataJSON(e); setIsMenuOpen(false); }} />
                     </label>
                     <div className="h-px bg-slate-100 my-0.5"></div>
-                    <button 
-                      onClick={() => { setIsAdmin(false); setIsMenuOpen(false); }}
-                      className="w-full text-left px-3 py-2 text-xs font-semibold text-red-500 hover:bg-red-50 rounded-xl transition flex items-center gap-2"
-                    >
+                    <button onClick={() => { setIsAdmin(false); setIsMenuOpen(false); }} className="w-full text-left px-3 py-2 text-xs font-semibold text-red-500 hover:bg-red-50 rounded-xl transition flex items-center gap-2">
                       <Icon name="log-out" className="w-4 h-4" />
                       退出管理
                     </button>
                   </>
                 ) : (
-                  <button 
-                    onClick={() => { setShowLoginModal(true); setIsMenuOpen(false); }}
-                    className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-pink-50 hover:text-pink-600 rounded-xl transition flex items-center gap-2"
-                  >
+                  <button onClick={() => { setShowLoginModal(true); setIsMenuOpen(false); }} className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-pink-50 hover:text-pink-600 rounded-xl transition flex items-center gap-2">
                     <Icon name="lock" className="w-4 h-4" />
                     管理登录
                   </button>
                 )}
 
-                {/* 菜单底部署名 (@月不尽数) */}
                 <div className="h-px bg-slate-100 my-0.5"></div>
                 <div className="py-1.5 text-center text-[11px] font-medium text-pink-400/80 cursor-default select-none">
                   @月不尽数
@@ -866,26 +862,80 @@
               </div>
             )}
 
-            <button 
-              onClick={() => setIsMenuOpen(!isMenuOpen)}
-              className="w-12 h-12 bg-pink-400 hover:bg-pink-500 text-white rounded-full shadow-lg hover:shadow-pink-300/50 transition flex items-center justify-center"
-            >
+            <button onClick={() => setIsMenuOpen(!isMenuOpen)} className="w-12 h-12 bg-pink-400 hover:bg-pink-500 text-white rounded-full shadow-lg hover:shadow-pink-300/50 transition flex items-center justify-center">
               <Icon name={isMenuOpen ? "x" : "menu"} className="w-6 h-6" />
             </button>
           </div>
+
+          {/* --- 彩蛋页面 3D 亚克力立牌展厅 --- */}
+          {isEggOpen && (
+            <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex flex-col items-center justify-between p-6">
+              <div className="w-full max-w-4xl flex justify-between items-center text-white mb-4">
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">🐈‍⬛🐈🐾</span>
+                  <h2 className="text-lg font-bold tracking-wide">亚克力 3D 展厅</h2>
+                </div>
+                
+                <div className="flex items-center gap-3">
+                  {isAdmin && (
+                    <label className="cursor-pointer bg-pink-500 hover:bg-pink-600 text-white text-xs px-3.5 py-2 rounded-2xl transition flex items-center gap-1.5 font-bold shadow-lg">
+                      <Icon name="plus" className="w-4 h-4" />
+                      上传立牌 PNG
+                      <input type="file" accept="image/png" className="hidden" onChange={handleStandeeUpload} />
+                    </label>
+                  )}
+                  <button onClick={() => setIsEggOpen(false)} className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-full transition">
+                    <Icon name="x" className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* 3D 亚克力立牌陈列台 */}
+              <div className="w-full max-w-4xl flex-grow bg-slate-900/60 rounded-3xl border border-white/10 p-6 overflow-x-auto no-scrollbar flex items-end justify-center gap-8 relative">
+                {standeeImages.length === 0 ? (
+                  <div className="text-slate-400 text-sm text-center my-auto">
+                    <p>尚未上传立牌 PNG。</p>
+                    {isAdmin && <p className="text-xs text-pink-400 mt-1">点击右上角“上传立牌 PNG”体验 3D 透明立牌效果。</p>}
+                  </div>
+                ) : (
+                  standeeImages.map((imgSrc, idx) => (
+                    <div key={idx} className="flex flex-col items-center group relative">
+                      {/* 3D 亚克力主体与底座 */}
+                      <ThreeDImageCard src={imgSrc} alt="3D 立牌" enable3D={true} className="max-h-[50vh] object-contain acrylic-standee drop-shadow-[0_15px_15px_rgba(0,0,0,0.6)]">
+                        {/* 亚克力光泽高光条 */}
+                        <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/20 to-transparent pointer-events-none rounded-2xl"></div>
+                      </ThreeDImageCard>
+                      
+                      {/* 椭圆底座 (3D Standee Base) */}
+                      <div className="w-32 h-6 -mt-3 bg-white/20 rounded-[50%] border-2 border-white/60 shadow-[0_5px_15px_rgba(255,255,255,0.2)] backdrop-blur-md transform rotateX-60 flex items-center justify-center">
+                        <div className="w-16 h-2 bg-pink-300/60 rounded-full"></div>
+                      </div>
+
+                      {isAdmin && (
+                        <button 
+                          onClick={() => setStandeeImages(standeeImages.filter((_, i) => i !== idx))}
+                          className="absolute -top-2 -right-2 p-1 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition z-30 shadow"
+                        >
+                          <Icon name="trash-2" className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div className="text-slate-400 text-xs mt-4">
+                点击并按住立牌可进行 3D 旋转视角变换
+              </div>
+            </div>
+          )}
 
           {/* --- 管理登录弹窗 --- */}
           {showLoginModal && (
             <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
               <form onSubmit={handleAdminLogin} className="bg-white rounded-3xl w-full max-w-xs p-6 shadow-2xl relative border border-pink-100">
                 <h3 className="text-base font-bold text-slate-800 mb-3 text-center">管理登录</h3>
-                <input 
-                  type="password"
-                  placeholder="请输入密匙"
-                  value={passwordInput}
-                  onChange={(e) => setPasswordInput(e.target.value)}
-                  className="w-full px-3.5 py-2 bg-pink-50/50 border border-pink-200 rounded-2xl text-sm mb-4 focus:outline-none focus:border-pink-400"
-                />
+                <input type="password" placeholder="请输入密匙" value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} className="w-full px-3.5 py-2 bg-pink-50/50 border border-pink-200 rounded-2xl text-sm mb-4 focus:outline-none focus:border-pink-400" />
                 <div className="flex gap-2">
                   <button type="button" onClick={() => setShowLoginModal(false)} className="flex-1 py-2 bg-slate-100 text-slate-600 text-xs font-semibold rounded-2xl">取消</button>
                   <button type="submit" className="flex-1 py-2 bg-pink-400 text-white text-xs font-semibold rounded-2xl shadow-md">确认登录</button>
@@ -894,21 +944,21 @@
             </div>
           )}
 
-          {/* --- 谷子详情/预览弹窗 --- */}
+          {/* --- 谷子详情弹窗 --- */}
           {previewItem && (
             <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 cursor-pointer" onClick={() => setPreviewItem(null)}>
               <div className="bg-white rounded-3xl max-w-lg w-full overflow-hidden shadow-2xl cursor-default" onClick={(e) => e.stopPropagation()}>
                 <div className="relative max-h-[60vh] bg-slate-100 flex items-center justify-center p-4">
-                  <ThreeDImageCard src={previewItem.image} alt={previewItem.name} enable3D={previewItem.enable3D} className="max-h-[50vh] w-full object-contain">
-                    {previewItem.priceText && (
-                      <div 
-                        className={`absolute bottom-3 right-3 font-black drop-shadow-md px-2 py-1 rounded-md backdrop-blur-[2px] bg-white/30 z-10 ${previewItem.priceSize || 'text-sm'}`}
-                        style={{ color: previewItem.priceColor || '#f43f5e' }}
-                      >
-                        {previewItem.priceText}
-                      </div>
-                    )}
-                  </ThreeDImageCard>
+                  <ThreeDImageCard 
+                    src={previewItem.image} 
+                    alt={previewItem.name} 
+                    enable3D={previewItem.enable3D} 
+                    priceText={previewItem.priceText}
+                    priceColor={previewItem.priceColor}
+                    priceSize={previewItem.priceSize}
+                    priceItalic={previewItem.priceItalic}
+                    className="max-h-[50vh] w-full object-contain"
+                  />
                   <button onClick={() => setPreviewItem(null)} className="absolute top-3 right-3 p-1.5 bg-black/50 text-white rounded-full hover:bg-black/70 flex items-center justify-center z-20">
                     <Icon name="x" className="w-5 h-5" />
                   </button>
@@ -929,7 +979,6 @@
                   </div>
                   <h2 className="text-lg font-bold text-slate-800 mb-2">{previewItem.name}</h2>
                   
-                  {/* 标签列表 */}
                   {Array.isArray(previewItem.tags) && previewItem.tags.length > 0 && (
                     <div className="flex flex-wrap gap-1 mb-3">
                       {previewItem.tags.map((t, idx) => (
@@ -959,11 +1008,8 @@
               <div className="bg-white rounded-3xl w-full max-w-md p-6 shadow-2xl relative border border-pink-100">
                 <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
                   <h2 className="text-base font-bold text-slate-800">修改与排序类目</h2>
-                  <button onClick={() => setIsCatManageOpen(false)} className="text-slate-400 hover:text-slate-600">
-                    <Icon name="x" className="w-5 h-5" />
-                  </button>
+                  <button onClick={() => setIsCatManageOpen(false)} className="text-slate-400 hover:text-slate-600"><Icon name="x" className="w-5 h-5" /></button>
                 </div>
-
                 <div className="space-y-2.5 max-h-[50vh] overflow-y-auto no-scrollbar pr-1 mb-4">
                   {categories.map((cat, index) => (
                     <div key={cat.id} className="flex items-center gap-2 bg-slate-50 p-2.5 rounded-2xl border border-slate-100">
@@ -971,13 +1017,12 @@
                         <button disabled={index === 0} onClick={() => moveCategory(index, 'up')} className="p-0.5 text-slate-400 hover:text-pink-500 disabled:opacity-20 flex"><Icon name="chevron-up" className="w-3.5 h-3.5" /></button>
                         <button disabled={index === categories.length - 1} onClick={() => moveCategory(index, 'down')} className="p-0.5 text-slate-400 hover:text-pink-500 disabled:opacity-20 flex"><Icon name="chevron-down" className="w-3.5 h-3.5" /></button>
                       </div>
-                      <input type="text" value={cat.name} onChange={(e) => renameCategory(cat.id, e.target.value)} className="flex-grow bg-white border border-slate-200 px-3 py-1.5 rounded-xl text-sm text-slate-700 font-medium" />
-                      <button onClick={() => deleteCategory(cat.id)} className="p-1.5 text-slate-400 hover:text-red-500 transition flex"><Icon name="trash-2" className="w-4 h-4" /></button>
+                      <input type="text" value={cat.name} onChange={(e) => setCategories(categories.map(c => c.id === cat.id ? { ...c, name: e.target.value } : c))} className="flex-grow bg-white border border-slate-200 px-3 py-1.5 rounded-xl text-sm text-slate-700 font-medium" />
+                      <button onClick={() => setCategories(categories.filter(c => c.id !== cat.id))} className="p-1.5 text-slate-400 hover:text-red-500 transition flex"><Icon name="trash-2" className="w-4 h-4" /></button>
                     </div>
                   ))}
                 </div>
-
-                <button onClick={addCategory} className="w-full py-2.5 border-2 border-dashed border-pink-200 text-pink-500 hover:bg-pink-50 text-sm font-bold rounded-2xl transition flex items-center justify-center gap-1.5">
+                <button onClick={() => setCategories([...categories, { id: `cat-${Date.now()}`, name: '新类目' }])} className="w-full py-2.5 border-2 border-dashed border-pink-200 text-pink-500 hover:bg-pink-50 text-sm font-bold rounded-2xl transition flex items-center justify-center gap-1.5">
                   <Icon name="plus-circle" className="w-4 h-4" />
                   添加新类目
                 </button>
@@ -1009,31 +1054,21 @@
                     </div>
                   </div>
 
-                  {/* 3D 旋转效果控制开关 */}
+                  {/* 3D 开关 */}
                   <div className="flex items-center justify-between bg-pink-50/50 p-3 rounded-2xl border border-pink-100">
                     <div>
                       <span className="text-xs font-bold text-slate-700 block">开启 3D 旋转视角</span>
                       <span className="text-[10px] text-slate-400 block">按住图片可自由拖拽旋转 3D 视角</span>
                     </div>
                     <label className="relative inline-flex items-center cursor-pointer">
-                      <input 
-                        type="checkbox" 
-                        checked={formData.enable3D} 
-                        onChange={(e) => setFormData({ ...formData, enable3D: e.target.checked })} 
-                        className="sr-only peer"
-                      />
+                      <input type="checkbox" checked={formData.enable3D} onChange={(e) => setFormData({ ...formData, enable3D: e.target.checked })} className="sr-only peer" />
                       <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-pink-400"></div>
                     </label>
                   </div>
 
-                  {/* 图片显示比例 */}
                   <div>
                     <label className="block text-xs font-semibold text-slate-600 mb-1.5">图片展示比例</label>
-                    <select 
-                      value={formData.aspectRatio} 
-                      onChange={(e) => setFormData({ ...formData, aspectRatio: e.target.value })}
-                      className="w-full px-3.5 py-2 bg-pink-50/50 border border-pink-200 rounded-2xl text-sm font-medium"
-                    >
+                    <select value={formData.aspectRatio} onChange={(e) => setFormData({ ...formData, aspectRatio: e.target.value })} className="w-full px-3.5 py-2 bg-pink-50/50 border border-pink-200 rounded-2xl text-sm font-medium">
                       <option value="aspect-square">1 : 1 正方形 (吧唧/色纸)</option>
                       <option value="aspect-[3/4]">3 : 4 纵向长方形 (立牌/明信片/小卡)</option>
                       <option value="aspect-[4/3]">4 : 3 横向长方形 (海报/画幅)</option>
@@ -1041,40 +1076,33 @@
                     </select>
                   </div>
 
-                  {/* 价格标注 & 自定义色彩/字号 */}
+                  {/* 价格与字体增强设定 */}
                   <div className="p-3 bg-slate-50 border border-slate-100 rounded-2xl space-y-3">
                     <label className="block text-xs font-bold text-slate-700">图片右下角标（价格/标识文本）</label>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                      <input 
-                        type="text" 
-                        placeholder="如：￥25" 
-                        value={formData.priceText} 
-                        onChange={(e) => setFormData({ ...formData, priceText: e.target.value })} 
-                        className="px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs" 
-                      />
-
-                      {/* 字号自选 */}
-                      <select 
-                        value={formData.priceSize} 
-                        onChange={(e) => setFormData({ ...formData, priceSize: e.target.value })}
-                        className="px-2 py-1.5 bg-white border border-slate-200 rounded-xl text-xs"
-                      >
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <input type="text" placeholder="如：￥25" value={formData.priceText} onChange={(e) => setFormData({ ...formData, priceText: e.target.value })} className="px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs" />
+                      
+                      {/* 字号加宽加大选择 */}
+                      <select value={formData.priceSize} onChange={(e) => setFormData({ ...formData, priceSize: e.target.value })} className="px-2 py-1.5 bg-white border border-slate-200 rounded-xl text-xs">
                         <option value="text-xs">字号: 小</option>
                         <option value="text-sm">字号: 中 (默认)</option>
                         <option value="text-base">字号: 大</option>
                         <option value="text-lg">字号: 特大</option>
+                        <option value="text-xl">字号: 超大 2XL</option>
+                        <option value="text-2xl">字号: 巨型 3XL</option>
                       </select>
+                    </div>
 
-                      {/* 颜色选择盘 */}
-                      <div className="flex items-center gap-2 bg-white px-2 py-1 border border-slate-200 rounded-xl">
-                        <span className="text-[10px] text-slate-500 whitespace-nowrap">颜色:</span>
-                        <input 
-                          type="color" 
-                          value={formData.priceColor} 
-                          onChange={(e) => setFormData({ ...formData, priceColor: e.target.value })}
-                          className="w-6 h-6 rounded-lg cursor-pointer border-0 bg-transparent"
-                        />
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 bg-white px-3 py-1.5 border border-slate-200 rounded-xl flex-grow">
+                        <span className="text-xs text-slate-500 whitespace-nowrap">颜色色盘:</span>
+                        <input type="color" value={formData.priceColor} onChange={(e) => setFormData({ ...formData, priceColor: e.target.value })} className="w-6 h-6 rounded-lg cursor-pointer border-0 bg-transparent" />
                       </div>
+
+                      <label className="flex items-center gap-1.5 bg-white px-3 py-1.5 border border-slate-200 rounded-xl cursor-pointer">
+                        <input type="checkbox" checked={formData.priceItalic} onChange={(e) => setFormData({ ...formData, priceItalic: e.target.checked })} className="rounded text-pink-500 focus:ring-0" />
+                        <span className="text-xs font-bold italic text-slate-700">斜体效果</span>
+                      </label>
                     </div>
                   </div>
 
@@ -1103,8 +1131,8 @@
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">左上角角标文字 (店铺/状态)</label>
-                    <input type="text" placeholder="如：渡野居、求购中、已到货" value={formData.statusTag} onChange={(e) => setFormData({ ...formData, statusTag: e.target.value })} className="w-full px-3.5 py-2 bg-pink-50/50 border border-pink-200 rounded-2xl text-sm" />
+                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">左上角角标文字</label>
+                    <input type="text" placeholder="如：渡野居、求购中" value={formData.statusTag} onChange={(e) => setFormData({ ...formData, statusTag: e.target.value })} className="w-full px-3.5 py-2 bg-pink-50/50 border border-pink-200 rounded-2xl text-sm" />
                   </div>
 
                   <div>
@@ -1113,8 +1141,8 @@
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">详细备注/工艺等</label>
-                    <textarea rows="2" placeholder="如：流沙工艺、限量特签..." value={formData.note} onChange={(e) => setFormData({ ...formData, note: e.target.value })} className="w-full px-3.5 py-2 bg-pink-50/50 border border-pink-200 rounded-2xl text-sm"></textarea>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">详细备注/工艺</label>
+                    <textarea rows="2" placeholder="如：流沙工艺..." value={formData.note} onChange={(e) => setFormData({ ...formData, note: e.target.value })} className="w-full px-3.5 py-2 bg-pink-50/50 border border-pink-200 rounded-2xl text-sm"></textarea>
                   </div>
 
                   <div className="pt-2 flex justify-end gap-2">
