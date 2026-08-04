@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>凛麦图鉴 - 于是麦麦决定离家出走</title>
+  <!-- React & ReactDOM -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <!-- Babel for JSX -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen pb-12 antialiased selection:bg-pink-100 selection:text-pink-600">
+
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // --- 安全的图标渲染组件（解决白屏崩溃问题） ---
+    const Icon = ({ name, className }) => {
+      const iconRef = useRef(null);
+      useEffect(() => {
+        if (window.lucide && iconRef.current) {
+          iconRef.current.innerHTML = '';
+          const i = document.createElement('i');
+          i.setAttribute('data-lucide', name);
+          if (className) i.setAttribute('class', className);
+          iconRef.current.appendChild(i);
+          window.lucide.createIcons({ root: iconRef.current });
+        }
+      }, [name, className]);
+      return <span ref={iconRef} style={{ display: 'contents' }}></span>;
+    };
+
+    // 自定义你的管理员专属密钥（默认：admin123）
+    const ADMIN_PASSWORD = 'admin123';
+
+    // --- IndexedDB 安全大容量存储 ---
+    const DB_NAME = 'LinMaiCollectorDB';
+    const DB_VERSION = 1;
+    const STORE_NAME = 'goods';
+
+    const initDB = () => {
+      return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        request.onerror = () => reject('数据库打开失败');
+        request.onsuccess = () => resolve(request.result);
+        request.onupgradeneeded = (e) => {
+          const db = e.target.result;
+          if (!db.objectStoreNames.contains(STORE_NAME)) {
+            db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+          }
+        };
+      });
+    };
+
+    const getAllGoodsFromDB = async () => {
+      try {
+        const db = await initDB();
+        return new Promise((resolve) => {
+          const transaction = db.transaction(STORE_NAME, 'readonly');
+          const store = transaction.objectStore(STORE_NAME);
+          const request = store.getAll();
+          request.onsuccess = () => resolve(request.result || []);
+        });
+      } catch (err) {
+        console.error(err);
+        return [];
+      }
+    };
+
+    const saveGoodsToDB = async (goodsList) => {
+      try {
+        const db = await initDB();
+        const transaction = db.transaction(STORE_NAME, 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        store.clear();
+        goodsList.forEach(item => store.put(item));
+      } catch (err) {
+        console.error(err);
+      }
+    };
+
+    // --- 图片压缩助手 ---
+    const compressImage = (file, maxWidth = 800, quality = 0.7) => {
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = (e) => {
+          const img = new Image();
+          img.src = e.target.result;
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            let width = img.width;
+            let height = img.height;
+            if (width > maxWidth) {
+              height = Math.round((height * maxWidth) / width);
+              width = maxWidth;
+            }
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, width, height);
+            resolve(canvas.toDataURL('image/jpeg', quality));
+          };
+        };
+      });
+    };
+
+    // --- 默认分类数据 ---
+    const DEFAULT_CATEGORIES = [
+      { id: 'cat-1', name: '吧唧类目' },
+      { id: 'cat-2', name: '明信片类目' },
+      { id: 'cat-3', name: '72h类目' },
+      { id: 'cat-4', name: '小卡类目' },
+      { id: 'cat-5', name: '满赠类目' },
+      { id: 'cat-6', name: '特签类目' },
+      { id: 'cat-7', name: '线下限定满赠类目' },
+    ];
+
+    const DEFAULT_HERO_IMG = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=1200&auto=format&fit=crop';
+
+    function App() {
+      const [isAdmin, setIsAdmin] = useState(false);
+      const [categories, setCategories] = useState(() => {
+        const saved = localStorage.getItem('collector_categories');
+        return saved ? JSON.parse(saved) : DEFAULT_CATEGORIES;
+      });
+      const [heroImage, setHeroImage] = useState(() => {
+        return localStorage.getItem('collector_hero_img') || DEFAULT_HERO_IMG;
+      });
+
+      const [activeCatId, setActiveCatId] = useState('all');
+      const [searchQuery, setSearchQuery] = useState('');
+      const [goods, setGoods] = useState([]);
+      
+      const [isModalOpen, setIsModalOpen] = useState(false);
+      const [isCatManageOpen, setIsCatManageOpen] = useState(false);
+      const [previewItem, setPreviewItem] = useState(null); 
+      const [editingGoods, setEditingGoods] = useState(null);
+      const [showLoginModal, setShowLoginModal] = useState(false);
+      const [passwordInput, setPasswordInput] = useState('');
+
+      const [formData, setFormData] = useState({
+        name: '', categoryId: '', image: '', status: 'collected', count: 1, note: ''
+      });
+
+      useEffect(() => {
+        getAllGoodsFromDB().then(data => setGoods(data));
+      }, []);
+
+      useEffect(() => {
+        localStorage.setItem('collector_categories', JSON.stringify(categories));
+      }, [categories]);
+
+      useEffect(() => {
+        localStorage.setItem('collector_hero_img', heroImage);
+      }, [heroImage]);
+
+      const updateGoodsList = (newList) => {
+        setGoods(newList);
+        saveGoodsToDB(newList);
+      };
+
+      const handleAdminLogin = (e) => {
+        e.preventDefault();
+        if (passwordInput === ADMIN_PASSWORD) {
+          setIsAdmin(true);
+          setShowLoginModal(false);
+          setPasswordInput('');
+        } else {
+          alert('密码错误！');
+        }
+      };
+
+      const moveCategory = (index, direction) => {
+        const newCats = [...categories];
+        const targetIndex = direction === 'up' ? index - 1 : index + 1;
+        if (targetIndex < 0 || targetIndex >= newCats.length) return;
+        const temp = newCats[index];
+        newCats[index] = newCats[targetIndex];
+        newCats[targetIndex] = temp;
+        setCategories(newCats);
+      };
+
+      const renameCategory = (id, newName) => {
+        setCategories(categories.map(c => c.id === id ? { ...c, name: newName } : c));
+      };
+
+      const addCategory = () => {
+        setCategories([...categories, { id: `cat-${Date.now()}`, name: '新类目' }]);
+      };
+
+      const deleteCategory = (id) => {
+        if (categories.length <= 1) return alert('至少保留一个分类');
+        if (confirm('确认删除该分类吗？')) {
+          setCategories(categories.filter(c => c.id !== id));
+          if (activeCatId === id) setActiveCatId('all');
+        }
+      };
+
+      const handleGoodsSubmit = (e) => {
+        e.preventDefault();
+        if (!formData.name) return alert('请输入周边名称');
+        
+        let targetCat = formData.categoryId || categories[0]?.id || 'cat-1';
+
+        if (editingGoods) {
+          const updated = goods.map(g => g.id === editingGoods.id ? { ...formData, id: editingGoods.id, categoryId: targetCat } : g);
+          updateGoodsList(updated);
+        } else {
+          const newGood = {
+            ...formData,
+            id: `good-${Date.now()}`,
+            categoryId: targetCat,
+            createdAt: Date.now()
+          };
+          updateGoodsList([newGood, ...goods]);
+        }
+        closeModal();
+      };
+
+      const handleDeleteGood = (id, e) => {
+        e.stopPropagation();
+        if (confirm('确定要删除这个周边记录吗？')) {
+          updateGoodsList(goods.filter(g => g.id !== id));
+        }
+      };
+
+      const openEditModal = (item, e) => {
+        e.stopPropagation();
+        setEditingGoods(item);
+        setFormData({
+          name: item.name,
+          categoryId: item.categoryId,
+          image: item.image,
+          status: item.status || 'collected',
+          count: item.count || 1,
+          note: item.note || ''
+        });
+        setIsModalOpen(true);
+      };
+
+      const closeModal = () => {
+        setIsModalOpen(false);
+        setEditingGoods(null);
+        setFormData({ name: '', categoryId: '', image: '', status: 'collected', count: 1, note: '' });
+      };
+
+      const handleImageUpload = async (e) => {
+        const file = e.target.files[0];
+        if (file) {
+          const compressed = await compressImage(file);
+          setFormData(prev => ({ ...prev, image: compressed }));
+        }
+      };
+
+      const handleBannerUpload = async (e) => {
+        const file = e.target.files[0];
+        if (file) {
+          const compressed = await compressImage(file, 1200, 0.8);
+          setHeroImage(compressed);
+        }
+      };
+
+      const filteredGoods = goods.filter(item => {
+        const matchesCat = activeCatId === 'all' || item.categoryId === activeCatId;
+        const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                              (item.note && item.note.toLowerCase().includes(searchQuery.toLowerCase()));
+        return matchesCat && matchesSearch;
+      });
+
+      return (
+        <div className="max-w-6xl mx-auto bg-white min-h-screen shadow-xl relative">
+          
+          {/* --- Banner 区域 --- */}
+          <div className="relative h-[40vh] sm:h-[45vh] w-full overflow-hidden bg-slate-900 group">
+            <img 
+              src={heroImage} 
+              alt="凛麦图鉴 Banner" 
+              className="w-full h-full object-cover opacity-85 group-hover:scale-105 transition-transform duration-700 ease-out"
+            />
+            <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-slate-950/20 to-transparent"></div>
+            
+            <div className="absolute top-4 right-4 z-10">
+              {isAdmin ? (
+                <button onClick={() => setIsAdmin(false)} className="bg-red-500/80 hover:bg-red-600 text-white text-xs px-3 py-1.5 rounded-lg backdrop-blur-md transition">
+                  退出馆长模式
+                </button>
+              ) : (
+                <button onClick={() => setShowLoginModal(true)} className="bg-black/40 hover:bg-black/60 text-white/90 hover:text-white text-xs px-3 py-1.5 rounded-lg backdrop-blur-md border border-white/20 transition flex items-center gap-1">
+                  <Icon name="lock" className="w-3 h-3" />
+                  馆长登录
+                </button>
+              )}
+            </div>
+
+            <div className="absolute bottom-6 left-6 right-6 flex justify-between items-end">
+              <div>
+                <span className="inline-block px-3 py-1 bg-pink-500/90 backdrop-blur-md text-white text-xs font-semibold rounded-full mb-2 tracking-wide">
+                  IP: 于是麦麦决定离家出走
+                </span>
+                <h1 className="text-3xl sm:text-5xl font-extrabold text-white tracking-tight drop-shadow-md">
+                  凛麦图鉴
+                </h1>
+              </div>
+
+              {isAdmin && (
+                <label className="cursor-pointer bg-white/20 hover:bg-white/30 backdrop-blur-md text-white text-xs px-3 py-2 rounded-lg border border-white/30 transition flex items-center gap-1.5 shadow-sm">
+                  <Icon name="camera" className="w-4 h-4" />
+                  <span className="hidden sm:inline">换封面</span>
+                  <input type="file" accept="image/*" className="hidden" onChange={handleBannerUpload} />
+                </label>
+              )}
+            </div>
+          </div>
+
+          {/* --- 搜索框与操作区 --- */}
+          <div className="sticky top-0 z-30 bg-white/90 backdrop-blur-md border-b border-slate-100 p-4 shadow-sm">
+            <div className="flex flex-col sm:flex-row gap-3 items-center justify-between">
+              
+              <div className="relative w-full sm:w-80 flex items-center">
+                <Icon name="search" className="w-4 h-4 absolute left-3.5 text-slate-400" />
+                <input 
+                  type="text" 
+                  placeholder="搜索谷子名称、备注特征..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-10 pr-8 py-2 bg-slate-100/80 border border-transparent rounded-full text-sm focus:bg-white focus:border-pink-400 focus:outline-none transition"
+                />
+                {searchQuery && (
+                  <button onClick={() => setSearchQuery('')} className="absolute right-3 text-slate-400 hover:text-slate-600">
+                    <Icon name="x" className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+
+              {isAdmin && (
+                <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                  <button 
+                    onClick={() => setIsCatManageOpen(true)}
+                    className="flex-1 sm:flex-none px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium rounded-xl transition flex items-center justify-center gap-1.5"
+                  >
+                    <Icon name="settings-2" className="w-4 h-4" />
+                    管理分类
+                  </button>
+
+                  <button 
+                    onClick={() => setIsModalOpen(true)}
+                    className="flex-1 sm:flex-none px-4 py-2 bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold rounded-xl shadow-sm hover:shadow-pink-500/25 transition flex items-center justify-center gap-1.5"
+                  >
+                    <Icon name="plus" className="w-4 h-4" />
+                    上传新谷子
+                  </button>
+                </div>
+              )}
+
+            </div>
+
+            {/* --- 分类 Tab --- */}
+            <div className="flex items-center gap-2 mt-4 overflow-x-auto no-scrollbar pb-1">
+              <button
+                onClick={() => setActiveCatId('all')}
+                className={`px-4 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition ${
+                  activeCatId === 'all'
+                    ? 'bg-slate-900 text-white shadow-sm'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                全谷图鉴 ({goods.length})
+              </button>
+
+              {categories.map((cat) => {
+                const count = goods.filter(g => g.categoryId === cat.id).length;
+                const isActive = activeCatId === cat.id;
+                return (
+                  <button
+                    key={cat.id}
+                    onClick={() => setActiveCatId(cat.id)}
+                    className={`px-4 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition flex items-center gap-1.5 ${
+                      isActive
+                        ? 'bg-pink-500 text-white shadow-sm'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    <span>{cat.name}</span>
+                    <span className={`px-1.5 py-0.2 text-[10px] rounded-full ${isActive ? 'bg-pink-600 text-white' : 'bg-slate-200 text-slate-500'}`}>
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* --- 周边列表卡片网格 --- */}
+          <div className="p-4 sm:p-6">
+            {filteredGoods.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-20 text-slate-400">
+                <Icon name="box" className="w-16 h-16 stroke-1 mb-3" />
+                <p className="text-sm">暂无周边收录，{isAdmin ? '快点击右上角“上传新谷子”吧！' : '等待馆长收录中...'}</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
+                {filteredGoods.map((item) => {
+                  const cat = categories.find(c => c.id === item.categoryId);
+                  return (
+                    <div 
+                      key={item.id} 
+                      onClick={() => setPreviewItem(item)}
+                      className="group bg-white rounded-2xl border border-slate-100 shadow-sm hover:shadow-md transition overflow-hidden flex flex-col justify-between relative cursor-pointer"
+                    >
+                      <div className="relative aspect-square w-full bg-slate-50 overflow-hidden">
+                        {item.image ? (
+                          <img src={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition duration-300" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-slate-300">
+                            <Icon name="image" className="w-10 h-10 stroke-1" />
+                          </div>
+                        )}
+                        
+                        {item.count > 1 && (
+                          <span className="absolute top-2 right-2 px-2 py-0.5 bg-slate-900/80 backdrop-blur-md text-white text-[10px] font-bold rounded-full">
+                            x{item.count}
+                          </span>
+                        )}
+
+                        <span className={`absolute top-2 left-2 px-2 py-0.5 text-[10px] font-semibold rounded-md backdrop-blur-md ${
+                          item.status === 'collected' ? 'bg-emerald-500/90 text-white' :
+                          item.status === 'wish' ? 'bg-amber-500/90 text-white' : 'bg-indigo-500/90 text-white'
+                        }`}>
+                          {item.status === 'collected' ? '已收立绘' : item.status === 'wish' ? '求购中' : '吃复数'}
+                        </span>
+                      </div>
+
+                      <div className="p-3 flex flex-col flex-grow justify-between">
+                        <div>
+                          <div className="text-[10px] text-pink-500 font-medium mb-0.5 truncate">
+                            {cat ? cat.name : '未分类'}
+                          </div>
+                          <h3 className="text-sm font-bold text-slate-800 line-clamp-2 leading-tight mb-1" title={item.name}>
+                            {item.name}
+                          </h3>
+                        </div>
+
+                        {isAdmin && (
+                          <div className="pt-2 mt-1 border-t border-slate-50 flex items-center justify-between text-slate-400">
+                            <button onClick={(e) => openEditModal(item, e)} className="p-1 hover:text-pink-500 transition">
+                              <Icon name="edit-3" className="w-3.5 h-3.5" />
+                            </button>
+                            <button onClick={(e) => handleDeleteGood(item.id, e)} className="p-1 hover:text-red-500 transition">
+                              <Icon name="trash-2" className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* --- 管理员登录弹窗 --- */}
+          {showLoginModal && (
+            <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+              <form onSubmit={handleAdminLogin} className="bg-white rounded-2xl w-full max-w-xs p-6 shadow-2xl relative">
+                <h3 className="text-base font-bold text-slate-800 mb-3 text-center">馆长/管理员验证</h3>
+                <input 
+                  type="password"
+                  placeholder="请输入密钥密码"
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                  className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm mb-4 focus:outline-none focus:border-pink-400"
+                />
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setShowLoginModal(false)} className="flex-1 py-2 bg-slate-100 text-slate-600 text-xs font-semibold rounded-xl">取消</button>
+                  <button type="submit" className="flex-1 py-2 bg-pink-500 text-white text-xs font-semibold rounded-xl">解禁修改</button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {/* --- 【谷子详情/大图弹窗】 --- */}
+          {previewItem && (
+            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 cursor-pointer" onClick={() => setPreviewItem(null)}>
+              <div className="bg-white rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl cursor-default" onClick={(e) => e.stopPropagation()}>
+                <div className="relative max-h-[60vh] bg-slate-100 flex items-center justify-center">
+                  <img src={previewItem.image} alt={previewItem.name} className="max-h-[60vh] w-full object-contain" />
+                  <button onClick={() => setPreviewItem(null)} className="absolute top-3 right-3 p-1.5 bg-black/50 text-white rounded-full hover:bg-black/70 flex items-center justify-center">
+                    <Icon name="x" className="w-5 h-5" />
+                  </button>
+                </div>
+                <div className="p-5">
+                  <span className="text-xs text-pink-500 font-semibold">{categories.find(c => c.id === previewItem.categoryId)?.name || '未分类'}</span>
+                  <h2 className="text-lg font-bold text-slate-800 mb-2">{previewItem.name}</h2>
+                  {previewItem.note && (
+                    <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-xs text-slate-600 leading-relaxed">
+                      {previewItem.note}
+                    </div>
+                  )}
+                  <div className="mt-4 flex justify-between items-center text-xs text-slate-400">
+                    <span>持有数量：{previewItem.count} 个</span>
+                    <span>收集状态：{previewItem.status === 'collected' ? '已收立绘' : previewItem.status === 'wish' ? '求购中' : '吃复数'}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* --- 管理分类弹窗 (仅管理员) --- */}
+          {isCatManageOpen && isAdmin && (
+            <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-2xl relative">
+                <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
+                  <h2 className="text-base font-bold text-slate-800">管理与排序类目</h2>
+                  <button onClick={() => setIsCatManageOpen(false)} className="text-slate-400 hover:text-slate-600">
+                    <Icon name="x" className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="space-y-2.5 max-h-[50vh] overflow-y-auto no-scrollbar pr-1 mb-4">
+                  {categories.map((cat, index) => (
+                    <div key={cat.id} className="flex items-center gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                      <div className="flex flex-col gap-0.5">
+                        <button disabled={index === 0} onClick={() => moveCategory(index, 'up')} className="p-0.5 text-slate-400 hover:text-pink-500 disabled:opacity-20 flex"><Icon name="chevron-up" className="w-3.5 h-3.5" /></button>
+                        <button disabled={index === categories.length - 1} onClick={() => moveCategory(index, 'down')} className="p-0.5 text-slate-400 hover:text-pink-500 disabled:opacity-20 flex"><Icon name="chevron-down" className="w-3.5 h-3.5" /></button>
+                      </div>
+                      <input type="text" value={cat.name} onChange={(e) => renameCategory(cat.id, e.target.value)} className="flex-grow bg-white border border-slate-200 px-3 py-1.5 rounded-lg text-sm text-slate-700 font-medium" />
+                      <button onClick={() => deleteCategory(cat.id)} className="p-1.5 text-slate-400 hover:text-red-500 transition flex"><Icon name="trash-2" className="w-4 h-4" /></button>
+                    </div>
+                  ))}
+                </div>
+
+                <button onClick={addCategory} className="w-full py-2.5 border-2 border-dashed border-pink-200 text-pink-500 hover:bg-pink-50 text-sm font-semibold rounded-xl transition flex items-center justify-center gap-1.5">
+                  <Icon name="plus-circle" className="w-4 h-4" />
+                  添加新类目
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* --- 新增/编辑谷子弹窗 (仅管理员) --- */}
+          {isModalOpen && isAdmin && (
+            <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl w-full max-w-lg p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto">
+                <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
+                  <h2 className="text-base font-bold text-slate-800">{editingGoods ? '修改谷子信息' : '上传新谷子'}</h2>
+                  <button onClick={closeModal} className="text-slate-400 hover:text-slate-600"><Icon name="x" className="w-5 h-5" /></button>
+                </div>
+
+                <form onSubmit={handleGoodsSubmit} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">谷子实物图/官图</label>
+                    <div className="flex items-center gap-4">
+                      <div className="w-20 h-20 bg-slate-100 rounded-xl overflow-hidden flex items-center justify-center border border-slate-200 shrink-0">
+                        {formData.image ? <img src={formData.image} className="w-full h-full object-cover" /> : <Icon name="image" className="w-6 h-6 text-slate-300" />}
+                      </div>
+                      <label className="cursor-pointer bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium px-4 py-2.5 rounded-xl transition flex items-center gap-2">
+                        <Icon name="upload" className="w-4 h-4" />
+                        选择本地图片（自动智能压缩）
+                        <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">谷子名称 *</label>
+                    <input type="text" required placeholder="如：凛麦特签预售吧唧" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm" />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">所属类目</label>
+                    <select value={formData.categoryId || categories[0]?.id} onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })} className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm">
+                      {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1.5">收录状态</label>
+                      <select value={formData.status} onChange={(e) => setFormData({ ...formData, status: e.target.value })} className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm">
+                        <option value="collected">已收立绘</option>
+                        <option value="wish">求购中</option>
+                        <option value="duplicate">吃复数</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1.5">持有数量</label>
+                      <input type="number" min="1" value={formData.count} onChange={(e) => setFormData({ ...formData, count: parseInt(e.target.value) || 1 })} className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm" />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">详细备注/工艺属性</label>
+                    <textarea rows="2" placeholder="如：流沙工艺、限量特签、入手价格..." value={formData.note} onChange={(e) => setFormData({ ...formData, note: e.target.value })} className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm"></textarea>
+                  </div>
+
+                  <div className="pt-2 flex justify-end gap-2">
+                    <button type="button" onClick={closeModal} className="px-4 py-2 bg-slate-100 text-slate-600 text-sm font-medium rounded-xl">取消</button>
+                    <button type="submit" className="px-5 py-2 bg-pink-500 text-white text-sm font-semibold rounded-xl">保存收录</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
